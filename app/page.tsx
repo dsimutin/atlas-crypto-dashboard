@@ -49,6 +49,14 @@ type Runtime = {
   max_concurrent_demo_orders?: number;
   source_status?: Record<string, string>;
   source_reconnects?: Record<string, number>;
+  last_assessment_status?: string;
+  last_technical_reasons?: string[];
+  warmup_active?: boolean;
+  challenger_registered?: number;
+  challenger_evaluations?: number;
+  challenger_signals?: number;
+  challenger_conflicts?: number;
+  challenger_execution_allowed?: boolean;
 };
 
 const tabs: { id: Tab; icon: string; label: string }[] = [
@@ -97,13 +105,13 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
     title = "Один из источников переподключается";
     explanation = "Система продолжает сохранять доступные данные и не принимает неполные решения.";
     action = "Подождать 2 минуты; затем система сама пометит проблему технической";
-  } else if (completed === 0) {
+  } else if (runtime?.warmup_active) {
     title = "Идёт пятиминутный прогрев";
     explanation = "Источники подключены, формируется первое полное окно данных.";
     action = "Ничего делать не нужно";
-  } else if (technical > 0) {
+  } else if (runtime?.last_assessment_status === "UNKNOWN") {
     title = "Обнаружена техническая блокировка";
-    explanation = "После прогрева часть данных была неполной. Это не считается отсутствием сигнала.";
+    explanation = runtime?.last_technical_reasons?.join(" · ") || "Последний снимок был неполным. Это не считается отсутствием сигнала.";
     action = "Система продолжит восстановление; причина уже сохранена для диагностики";
   } else if (reviewDue && (runtime?.virtual_actions ?? 0) === 0) {
     title = "Гипотеза требует пересмотра";
@@ -141,7 +149,7 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
 
     <section className="checkpointCard"><div><span>БЛИЖАЙШАЯ КОНТРОЛЬНАЯ ТОЧКА</span><strong>{reviewAt ? (reviewDue ? "Срок пересмотра наступил" : `Через ${relativeUntil(reviewAt, now)}`) : "После первого живого снимка"}</strong></div><p>Через 7 дней: проверить, возникают ли сигналы. После 200 OOS: проверить положительное ожидание после всех расходов. Только затем — Testnet и решение о Mainnet.</p></section>
 
-    <section className="miniGrid"><article><span>Полностью проверено</span><strong>{n(completed)}</strong></article><article><span>Рынок без сигнала</span><strong>{n(runtime?.no_signal_cycles)}</strong></article><article><span>Защитные запреты</span><strong>{n(runtime?.protective_veto_cycles)}</strong></article><article><span>Технические блоки</span><strong className={technical ? "negative" : "positive"}>{n(technical)}</strong></article></section>
+    <section className="miniGrid"><article><span>Полностью проверено</span><strong>{n(completed)}</strong></article><article><span>Рынок без сигнала</span><strong>{n(runtime?.no_signal_cycles)}</strong></article><article><span>Защитные запреты</span><strong>{n(runtime?.protective_veto_cycles)}</strong></article><article><span>Неполные снимки за всё время</span><strong>{n(technical)}</strong><small>Счётчик истории, не текущая авария</small></article></section>
 
     <section className="automationCard"><span>ЧТО СИСТЕМА РЕШАЕТ САМА</span><p>Переподключение и состав сбора данных · остановка при плохих данных · сопровождение виртуальных сигналов · постановка гипотезы на пересмотр.</p><small>Порог стратегии не меняется скрытно: новая идея создаётся отдельной версией и проверяется заново.</small></section>
   </div>;
@@ -151,6 +159,7 @@ function Results({ runtime }: { runtime: Runtime | null }) {
   return <div className="screenBody standalone"><h2 className="pageTitle">Что уже произошло</h2>
     <section className="statsCard"><h3>Живой поток</h3><div className="statsGrid"><div><span>Bybit</span><strong>{n(runtime?.bybit_messages)}</strong></div><div><span>Binance</span><strong>{n(runtime?.binance_messages)}</strong></div><div><span>Циклы агентов</span><strong>{n(runtime?.assessment_cycles)}</strong></div><div><span>Стратегия проверена</span><strong>{n(runtime?.strategy_cycles)}</strong></div><div><span>Виртуальные сигналы</span><strong>{n(runtime?.virtual_actions)}</strong></div><div><span>Ожидают результата</span><strong>{n(runtime?.pending_virtual_observations)}</strong></div></div></section>
     <section className="decisionCard"><span>ПОСЛЕДНЕЕ РЕШЕНИЕ</span><strong>{runtime?.last_decision_status ?? "Ещё не было полного решения"}</strong><p>{runtime?.last_decision_reasons?.join(" · ") || "После прогрева здесь появится человеческое объяснение."}</p></section>
+    <section className="statsCard"><h3>Стратегии-кандидаты</h3><div className="statsGrid"><div><span>Зарегистрировано</span><strong>{n(runtime?.challenger_registered)}</strong></div><div><span>Независимых проверок</span><strong>{n(runtime?.challenger_evaluations)}</strong></div><div><span>Сигналов-кандидатов</span><strong>{n(runtime?.challenger_signals)}</strong></div><div><span>Конфликтов</span><strong>{n(runtime?.challenger_conflicts)}</strong></div></div><small>Compression breakout · Failed breakout · Balance mean reversion. Все работают только в SHADOW/PAPER; доступ к ордерам отключён.</small></section>
     <section className="statsCard"><h3>Demo-торговля</h3><div className="statsGrid"><div><span>Подключение</span><strong>{runtime?.testnet_connected ? "Есть" : "Нет"}</strong></div><div><span>Всего тестовых ордеров</span><strong>{n(runtime?.demo_orders_total)}</strong></div><div><span>Открытые ордера</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_orders ?? 0) : "Ещё не сверено"}</strong></div><div><span>Открытые позиции</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_positions ?? 0) : "Ещё не сверено"}</strong></div><div><span>Максимум параллельно</span><strong>{runtime?.max_concurrent_demo_orders ?? 4}</strong></div></div><small>Прочерк означает, что приватное состояние Bybit ещё не сверено. Это не подменяется нулём. Фактический допуск — от 0 до 4 по общему риску и корреляции.</small></section>
     <section className="evidenceCard"><h3>Обязательные проверки</h3>{readiness.criteria.map((item)=><div className="evidenceRow" key={item.criterion_id}><b>{item.criterion_id}</b><span>{item.summary}</span><i className={item.status.toLowerCase()}>{item.status}</i></div>)}</section>
   </div>;

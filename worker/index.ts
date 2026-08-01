@@ -18,10 +18,13 @@ interface Env {
 const runtimeFields = new Set([
   "updated_at", "first_observation_at", "last_full_cycle_at", "last_decision_status",
   "last_decision_reasons", "mode", "bybit_messages", "binance_messages",
+  "last_assessment_status", "last_technical_reasons", "warmup_active",
   "observed_symbols",
   "assessment_cycles", "strategy_cycles", "virtual_actions", "completed_cycles",
   "warmup_cycles", "protective_veto_cycles", "no_signal_cycles", "cost_blocked_cycles",
   "technical_block_cycles", "oos_excluded_overlaps", "pending_virtual_observations",
+  "challenger_registered", "challenger_evaluations", "challenger_signals",
+  "challenger_conflicts", "challenger_execution_allowed",
   "qualified_oos_observations", "required_oos_observations",
   "modeled_capital_usdt", "risk_per_trade_fraction", "risk_budget_usdt",
   "execution_network_available", "source_status", "source_reconnects", "source_errors",
