@@ -18,6 +18,7 @@ interface Env {
 const runtimeFields = new Set([
   "updated_at", "first_observation_at", "last_full_cycle_at", "last_decision_status",
   "last_decision_reasons", "mode", "bybit_messages", "binance_messages",
+  "observed_symbols",
   "assessment_cycles", "strategy_cycles", "virtual_actions", "completed_cycles",
   "warmup_cycles", "protective_veto_cycles", "no_signal_cycles", "cost_blocked_cycles",
   "technical_block_cycles", "oos_excluded_overlaps", "pending_virtual_observations",
@@ -30,6 +31,8 @@ const runtimeFields = new Set([
   "demo_unmatched_positions",
   "demo_protection_status", "demo_protected_symbol", "universe_observed_count",
   "universe_trade_eligible_count", "universe_symbols",
+  "universe_quality_samples", "universe_quality_ready_count",
+  "universe_quality_required_samples_per_symbol",
   "max_concurrent_demo_orders",
 ]);
 

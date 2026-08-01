@@ -11,6 +11,7 @@ type Runtime = {
   last_full_cycle_at?: string | null;
   last_decision_status?: string | null;
   last_decision_reasons?: string[];
+  observed_symbols?: string[];
   bybit_messages?: number;
   binance_messages?: number;
   assessment_cycles?: number;
@@ -42,6 +43,9 @@ type Runtime = {
   universe_observed_count?: number;
   universe_trade_eligible_count?: number;
   universe_symbols?: string[];
+  universe_quality_samples?: number;
+  universe_quality_ready_count?: number;
+  universe_quality_required_samples_per_symbol?: number;
   max_concurrent_demo_orders?: number;
   source_status?: Record<string, string>;
   source_reconnects?: Record<string, number>;
@@ -129,7 +133,7 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
 
     <section className="checkpointCard"><div><span>ЗАЩИТА ПОЗИЦИИ</span><strong>{runtime?.demo_protection_status === "PASSED" ? "SL · TP · trailing подтверждены Bybit" : "Ещё не подтверждена"}</strong></div><p>{runtime?.demo_protection_status === "PASSED" ? `Demo-тест ${runtime.demo_protected_symbol ?? ""} завершён reduce-only закрытием.` : "До подтверждения серверной защиты автоматические входы запрещены."}</p></section>
 
-    <section className="checkpointCard"><div><span>ДИНАМИЧЕСКИЙ UNIVERSE</span><strong>{n(runtime?.universe_trade_eligible_count)} подходящих · {n(runtime?.universe_observed_count)} в верхнем списке</strong></div><p>{runtime?.universe_symbols?.join(" · ") || "Сканирование Bybit и внешнего подтверждения ещё не завершено"}</p></section>
+    <section className="checkpointCard"><div><span>ДИНАМИЧЕСКИЙ UNIVERSE</span><strong>{n(runtime?.universe_quality_ready_count)} из {n(runtime?.observed_symbols?.length)} прошли проверку качества</strong></div><p>{runtime?.observed_symbols?.join(" · ") || runtime?.universe_symbols?.join(" · ") || "Сканирование Bybit и внешнего подтверждения ещё не завершено"}</p><small>Собрано {n(runtime?.universe_quality_samples)} замеров; минимум {n(runtime?.universe_quality_required_samples_per_symbol)} на каждую монету. До этого ордера по ней запрещены.</small></section>
 
     <section className="dataCard"><div><span>ДО ДОПУСКА РЕАЛЬНЫХ ДЕНЕГ</span><strong>{oos} из {required} независимых OOS-наблюдений</strong></div><b>{percent}%</b><div className="dataTrack"><i style={{width: `${percent}%`}} /></div><div className="estimate"><span>Оценка срока</span><strong>{launchEstimate}</strong></div><small>{oos === 0 ? "Если сигналов не будет 7 дней, система не продолжит ждать бесконечно — гипотеза получит статус пересмотра." : "Оценка пересчитывается по фактической скорости появления независимых наблюдений."}</small></section>
 
