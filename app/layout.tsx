@@ -13,17 +13,17 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("http://localhost:3000"),
+  metadataBase: new URL("https://dsimutin.github.io/atlas-crypto-dashboard/"),
   title: "Atlas Crypto System — Readiness",
   description: "Локальная read-only панель доказательств и готовности системы.",
   icons: {
-    icon: "/favicon.svg",
-    shortcut: "/favicon.svg",
+    icon: "/atlas-crypto-dashboard/favicon.svg",
+    shortcut: "/atlas-crypto-dashboard/favicon.svg",
   },
   openGraph: {
     title: "Atlas Crypto System — Readiness",
     description: "Read-only контроль доказательств и ограничений.",
-    images: ["/og.png"],
+    images: ["/atlas-crypto-dashboard/og.png"],
   },
 };
 
