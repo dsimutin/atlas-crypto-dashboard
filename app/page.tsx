@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import readiness from "../public/readiness.json";
 
-const runtimeUrl = "https://gist.githubusercontent.com/dsimutin/1a0269ca6ae611a53f29750b7cf7a84d/raw/progress.json";
+const runtimeUrl = "https://api.github.com/gists/1a0269ca6ae611a53f29750b7cf7a84d";
 
 type Tab = "home" | "results" | "connection";
 type Leader = {
@@ -264,12 +264,16 @@ export default function Page() {
     const refresh = async () => {
       try {
         const response = await fetch(`${runtimeUrl}?t=${Date.now()}`, { cache: "no-store" });
-        if (response.ok && active) setRuntime(await response.json() as Runtime);
+        if (response.ok && active) {
+          const gist = await response.json() as { files?: Record<string, { content?: string }> };
+          const content = gist.files?.["progress.json"]?.content;
+          if (content) setRuntime(JSON.parse(content) as Runtime);
+        }
       } catch { /* stale state is shown explicitly */ }
       if (active) setNow(Date.now());
     };
     void refresh();
-    const poll = window.setInterval(() => { setNow(Date.now()); void refresh(); }, 15_000);
+    const poll = window.setInterval(() => { setNow(Date.now()); void refresh(); }, 90_000);
     return () => { active = false; window.clearInterval(poll); };
   }, []);
   useEffect(() => {
@@ -294,7 +298,7 @@ export default function Page() {
   };
   const fresh = useMemo(() => {
     const timestamp = runtime?.server_received_at ?? runtime?.updated_at;
-    return Boolean(timestamp && now - new Date(timestamp).getTime() < 90_000);
+    return Boolean(timestamp && now - new Date(timestamp).getTime() < 180_000);
   }, [runtime, now]);
   return <main><div className="phone"><StatusBar fresh={fresh} />{tab === "home" && <Header notificationsEnabled={notificationsEnabled} onEnable={()=>void enableNotifications()} />}{tab === "home" ? <Home runtime={runtime} fresh={fresh} now={now} /> : tab === "results" ? <Results runtime={runtime} /> : <Connection runtime={runtime} />}
     <nav aria-label="Основная навигация">{tabs.map((item)=><button key={item.id} className={tab===item.id?"active":""} onClick={()=>setTab(item.id)}><i>{item.icon}</i><span>{item.label}</span></button>)}</nav>
