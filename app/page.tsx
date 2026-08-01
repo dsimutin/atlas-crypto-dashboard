@@ -123,6 +123,9 @@ type Runtime = {
   factor_model_paper?: { paper_governor?: { status?: string; required_transitions?: number; required_live_bars?: number; total_transitions?: number; minimum_live_bars?: number; median_return?: number; maximum_drawdown?: number; profitable_symbols?: number; blockers?: string[]; demo_orders_allowed?: boolean } };
   factor_model_tournament?: { status?: string; active_models?: number; registry_models?: number; unsupported_model_ids?: string[]; leader_model_id?: string; leaderboard?: Leader[]; future_registry_models_auto_enrolled?: boolean };
   model_winner_notification?: WinnerNotification;
+  watchdog_status?: string;
+  watchdog_checked_at?: string;
+  watchdog_reasons?: string[];
 };
 
 const tabs: { id: Tab; icon: string; label: string }[] = [
@@ -203,6 +206,8 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
     </section>
 
     <section className="actionCard"><span>ЧТО ДЕЛАТЬ СЕЙЧАС</span><strong>{action}</strong><small>Обновлено: {runtime?.server_received_at ? new Date(runtime.server_received_at).toLocaleTimeString("ru-RU") : "ожидание"}</small></section>
+
+    <section className="checkpointCard"><div><span>КОНТРОЛЬ НЕПРЕРЫВНОСТИ</span><strong className={runtime?.watchdog_status === "HEALTHY" ? "positive" : "negative"}>{runtime?.watchdog_status === "HEALTHY" ? "Сбор контролируется" : runtime?.watchdog_status ?? "Запускается"}</strong></div><p>{runtime?.watchdog_reasons?.join(" · ") || "Watchdog раз в минуту проверяет свежесть снимка и оба источника; при остановке показывает уведомление macOS."}</p></section>
 
     <section className="miniGrid userVitals"><article><span>Bybit Demo</span><strong className={demoConnected ? "positive" : "negative"}>{demoConnected ? "Подключён" : "Не подключён"}</strong></article><article><span>Открытые ордера</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_orders ?? 0) : "—"}</strong></article><article><span>Открытые позиции</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_positions ?? 0) : "—"}</strong><small>{runtime?.demo_unmatched_positions ? "Есть внешняя позиция" : "Сверено"}</small></article><article><span>Проверка ордера</span><strong>{runtime?.demo_order_canary_status === "PASSED" ? "Пройдена" : runtime?.demo_order_canary_status === "FAILED" ? "Ошибка" : "Впереди"}</strong></article></section>
 
@@ -287,7 +292,10 @@ export default function Page() {
     const permission = await Notification.requestPermission();
     setNotificationsEnabled(permission === "granted");
   };
-  const fresh = useMemo(() => Boolean(runtime?.server_received_at && now - new Date(runtime.server_received_at).getTime() < 90_000), [runtime, now]);
+  const fresh = useMemo(() => {
+    const timestamp = runtime?.server_received_at ?? runtime?.updated_at;
+    return Boolean(timestamp && now - new Date(timestamp).getTime() < 90_000);
+  }, [runtime, now]);
   return <main><div className="phone"><StatusBar fresh={fresh} />{tab === "home" && <Header notificationsEnabled={notificationsEnabled} onEnable={()=>void enableNotifications()} />}{tab === "home" ? <Home runtime={runtime} fresh={fresh} now={now} /> : tab === "results" ? <Results runtime={runtime} /> : <Connection runtime={runtime} />}
     <nav aria-label="Основная навигация">{tabs.map((item)=><button key={item.id} className={tab===item.id?"active":""} onClick={()=>setTab(item.id)}><i>{item.icon}</i><span>{item.label}</span></button>)}</nav>
   </div></main>;
