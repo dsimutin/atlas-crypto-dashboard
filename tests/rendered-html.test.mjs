@@ -17,12 +17,11 @@ test("renders the Russian readiness console", async () => {
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /Crypto Agent — Readiness Console/);
-  assert.match(html, /Система ещё проверяется/);
-  assert.match(html, /Запуск торговли недоступен/);
-  assert.match(html, /ПОЧЕМУ ЗАПУСК НЕДОСТУПЕН/);
-  assert.match(html, /Накопление real-data evidence/);
-  assert.match(html, /0 из 200 OOS-наблюдений/);
-  assert.match(html, /Торговый контур не подключён/);
+  assert.match(html, /Нет свежей связи с системой/);
+  assert.match(html, /ЧТО ДЕЛАТЬ СЕЙЧАС/);
+  assert.match(html, /БЛИЖАЙШАЯ КОНТРОЛЬНАЯ ТОЧКА/);
+  assert.match(html, /0.*из.*200.*независимых OOS-наблюдений/);
+  assert.match(html, /Система не продолжит ждать бесконечно/i);
 });
 
 test("has no secret inputs or network execution surface", async () => {
@@ -30,6 +29,6 @@ test("has no secret inputs or network execution surface", async () => {
   const html = await response.text();
   assert.doesNotMatch(html, /<form|<input|<textarea|contenteditable/i);
   assert.doesNotMatch(html, /apiKey|apiSecret|placeOrder|submitOrder/i);
-  assert.match(html, /<button[^>]*disabled/i);
+  assert.match(html, /SHADOW · READ ONLY/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });
