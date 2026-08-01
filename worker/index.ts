@@ -31,6 +31,7 @@ const runtimeFields = new Set([
   "history_status", "history_days", "history_rows_total", "history_symbols",
   "history_holdout_sealed", "history_live_oos_credit_added",
   "research_lab_status", "research_lab_tested_configs", "research_lab_symbols",
+  "research_lab_completed_configs", "research_lab_early_stopped_configs",
   "research_lab_cost_bps", "research_lab_holdout_read",
   "research_lab_execution_allowed", "research_lab_top_candidates",
   "startup_reconciliation_status", "startup_reconciliation_checked_at",
