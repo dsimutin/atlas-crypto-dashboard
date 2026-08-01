@@ -44,7 +44,9 @@ export default defineConfig(async () => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
-    base: "/atlas-crypto-dashboard/",
+    // This Worker is served from the origin root. The former GitHub Pages base
+    // made production request CSS and JS from a non-existent nested path.
+    base: "/",
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,
