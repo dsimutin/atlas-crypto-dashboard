@@ -160,7 +160,9 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
   const governor = runtime?.factor_model_paper?.paper_governor;
   const oos = governor?.total_transitions ?? 0;
   const required = governor?.required_transitions ?? 30;
-  const percent = Math.min(100, Math.round(oos / required * 100));
+  const transitionPercent = Math.min(100, oos / required * 100);
+  const barPercent = Math.min(100, (governor?.minimum_live_bars ?? 0) / (governor?.required_live_bars ?? 2016) * 100);
+  const percent = Math.round(Math.min(transitionPercent, barPercent));
   const completed = runtime?.completed_cycles ?? 0;
   const technical = runtime?.technical_block_cycles ?? 0;
   const first = runtime?.first_observation_at ? new Date(runtime.first_observation_at) : null;
