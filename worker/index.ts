@@ -34,6 +34,8 @@ const runtimeFields = new Set([
   "research_lab_completed_configs", "research_lab_early_stopped_configs",
   "research_lab_cost_bps", "research_lab_holdout_read",
   "research_lab_execution_allowed", "research_lab_top_candidates",
+  "research_lab_strategy_factory", "research_lab_lookahead_audit",
+  "research_lab_market_diagnostics",
   "startup_reconciliation_status", "startup_reconciliation_checked_at",
   "startup_open_orders", "startup_open_positions", "startup_external_orders",
   "startup_unprotected_positions", "startup_position_symbols",
