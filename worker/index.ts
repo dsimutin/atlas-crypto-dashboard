@@ -25,6 +25,8 @@ const runtimeFields = new Set([
   "technical_block_cycles", "oos_excluded_overlaps", "pending_virtual_observations",
   "challenger_registered", "challenger_evaluations", "challenger_signals",
   "challenger_conflicts", "challenger_execution_allowed",
+  "history_status", "history_days", "history_rows_total", "history_symbols",
+  "history_holdout_sealed", "history_live_oos_credit_added",
   "qualified_oos_observations", "required_oos_observations",
   "modeled_capital_usdt", "risk_per_trade_fraction", "risk_budget_usdt",
   "execution_network_available", "source_status", "source_reconnects", "source_errors",
