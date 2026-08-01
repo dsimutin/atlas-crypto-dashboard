@@ -3,7 +3,15 @@
 import { useEffect, useMemo, useState } from "react";
 import readiness from "../public/readiness.json";
 
+const runtimeUrl = "https://gist.githubusercontent.com/dsimutin/1a0269ca6ae611a53f29750b7cf7a84d/raw/progress.json";
+
 type Tab = "home" | "results" | "connection";
+type Leader = {
+  model_id: string; expression: string; median_return: number; maximum_drawdown: number;
+  transitions: number; minimum_live_bars: number; score: number;
+  eligible_for_live_rank: boolean; status: string;
+};
+type WinnerNotification = Leader & { event_id: string; occurred_at: string; previous_model_id?: string | null };
 type Runtime = {
   updated_at?: string;
   server_received_at?: string;
@@ -57,6 +65,13 @@ type Runtime = {
   challenger_signals?: number;
   challenger_conflicts?: number;
   challenger_execution_allowed?: boolean;
+  cross_sectional_selected?: Array<{
+    symbol: string;
+    strategy_id: string;
+    expected_net_edge_bps: string;
+  }>;
+  cross_sectional_rejections?: Record<string, string>;
+  cross_sectional_execution_allowed?: boolean;
   history_status?: string;
   history_days?: number;
   history_rows_total?: number;
@@ -79,6 +94,11 @@ type Runtime = {
   research_lab_strategy_factory?: { structural_templates?: number };
   research_lab_lookahead_audit?: string;
   research_lab_market_diagnostics?: { offline_change_points?: number; online_drift_events?: number };
+  research_lab_viable_candidates?: number;
+  research_external_audit_status?: string;
+  research_generated_hypotheses?: number;
+  research_accepted_hypotheses?: number;
+  research_data_schema_audit?: string;
   orchestration_decisions?: Array<{
     strategy_id: string;
     stage: string;
@@ -100,6 +120,9 @@ type Runtime = {
   startup_position_symbols?: string[];
   startup_new_demo_actions_allowed?: boolean;
   startup_reconciliation_reasons?: string[];
+  factor_model_paper?: { paper_governor?: { status?: string; required_transitions?: number; required_live_bars?: number; total_transitions?: number; minimum_live_bars?: number; median_return?: number; maximum_drawdown?: number; profitable_symbols?: number; blockers?: string[]; demo_orders_allowed?: boolean } };
+  factor_model_tournament?: { status?: string; active_models?: number; registry_models?: number; unsupported_model_ids?: string[]; leader_model_id?: string; leaderboard?: Leader[]; future_registry_models_auto_enrolled?: boolean };
+  model_winner_notification?: WinnerNotification;
 };
 
 const tabs: { id: Tab; icon: string; label: string }[] = [
@@ -121,13 +144,14 @@ function StatusBar({ fresh }: { fresh: boolean }) {
   return <div className="statusbar"><strong>{fresh ? "● Система на связи" : "○ Нет свежих данных"}</strong><span>SHADOW · READ ONLY</span></div>;
 }
 
-function Header() {
-  return <header><div className="logo">A</div><div><h1>Atlas Crypto System</h1><p>Наблюдение и проверка стратегии</p></div><div className="bell">♧</div></header>;
+function Header({ notificationsEnabled, onEnable }: { notificationsEnabled: boolean; onEnable: () => void }) {
+  return <header><div className="logo">A</div><div><h1>Atlas Crypto System</h1><p>Наблюдение и проверка стратегии</p></div><button className="bell" onClick={onEnable} title="Уведомления о новом лидере">{notificationsEnabled ? "🔔" : "🔕"}</button></header>;
 }
 
 function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean; now: number }) {
-  const oos = runtime?.qualified_oos_observations ?? 0;
-  const required = runtime?.required_oos_observations ?? 200;
+  const governor = runtime?.factor_model_paper?.paper_governor;
+  const oos = governor?.total_transitions ?? 0;
+  const required = governor?.required_transitions ?? 30;
   const percent = Math.min(100, Math.round(oos / required * 100));
   const completed = runtime?.completed_cycles ?? 0;
   const technical = runtime?.technical_block_cycles ?? 0;
@@ -186,11 +210,11 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
 
     <section className="checkpointCard"><div><span>ДИНАМИЧЕСКИЙ UNIVERSE</span><strong>{n(runtime?.universe_quality_ready_count)} из {n(runtime?.observed_symbols?.length)} прошли проверку качества</strong></div><p>{runtime?.observed_symbols?.join(" · ") || runtime?.universe_symbols?.join(" · ") || "Сканирование Bybit и внешнего подтверждения ещё не завершено"}</p><small>Собрано {n(runtime?.universe_quality_samples)} замеров; минимум {n(runtime?.universe_quality_required_samples_per_symbol)} на каждую монету. До этого ордера по ней запрещены.</small></section>
 
-    <section className="dataCard"><div><span>ДО ДОПУСКА РЕАЛЬНЫХ ДЕНЕГ</span><strong>{oos} из {required} независимых OOS-наблюдений</strong></div><b>{percent}%</b><div className="dataTrack"><i style={{width: `${percent}%`}} /></div><div className="estimate"><span>Оценка срока</span><strong>{launchEstimate}</strong></div><small>{oos === 0 ? "Если сигналов не будет 7 дней, система не продолжит ждать бесконечно — гипотеза получит статус пересмотра." : "Оценка пересчитывается по фактической скорости появления независимых наблюдений."}</small></section>
+    <section className="dataCard"><div><span>ТЕКУЩИЙ PAPER-ДОПУСК</span><strong>{oos} из {required} переходов · {n(governor?.minimum_live_bars)} из {n(governor?.required_live_bars)} свечей</strong></div><b>{percent}%</b><div className="dataTrack"><i style={{width: `${percent}%`}} /></div><div className="estimate"><span>Статус</span><strong>{governor?.status ?? "Сбор данных"}</strong></div><small>Нужны одновременно 7 полных дней, 30 переходов, положительная медиана после расходов, минимум 4 прибыльных монеты и просадка не выше 10%.</small></section>
 
     <section className="checkpointCard"><div><span>РЕАЛИСТИЧНЫЙ МАСШТАБ</span><strong>{runtime?.modeled_capital_usdt ?? "30"} USDT</strong></div><p>Даже если на Demo лежат тысячи, риск считается только от этой суммы: не более {runtime?.risk_budget_usdt ?? "0.075"} USDT на сделку. Если минимальный ордер Bybit не помещается в лимит, решение будет NO_TRADE.</p></section>
 
-    <section className="checkpointCard"><div><span>БЛИЖАЙШАЯ КОНТРОЛЬНАЯ ТОЧКА</span><strong>{reviewAt ? (reviewDue ? "Срок пересмотра наступил" : `Через ${relativeUntil(reviewAt, now)}`) : "После первого живого снимка"}</strong></div><p>Через 7 дней: проверить, возникают ли сигналы. После 200 OOS: проверить положительное ожидание после всех расходов. Только затем — Testnet и решение о Mainnet.</p></section>
+    <section className="checkpointCard"><div><span>БЛИЖАЙШАЯ КОНТРОЛЬНАЯ ТОЧКА</span><strong>{reviewAt ? (reviewDue ? "Срок пересмотра наступил" : `Через ${relativeUntil(reviewAt, now)}`) : "После первого живого снимка"}</strong></div><p>Через 7 дней и после 30 переходов PAPER-governor проверит доходность, просадку и устойчивость. Это только рекомендация для Demo; Mainnet остаётся закрыт.</p></section>
 
     <section className="miniGrid"><article><span>Полностью проверено</span><strong>{n(completed)}</strong></article><article><span>Рынок без сигнала</span><strong>{n(runtime?.no_signal_cycles)}</strong></article><article><span>Защитные запреты</span><strong>{n(runtime?.protective_veto_cycles)}</strong></article><article><span>Неполные снимки за всё время</span><strong>{n(technical)}</strong><small>Счётчик истории, не текущая авария</small></article></section>
 
@@ -199,13 +223,18 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
 }
 
 function Results({ runtime }: { runtime: Runtime | null }) {
+  const tournament = runtime?.factor_model_tournament;
+  const leader = tournament?.leaderboard?.find(item => item.model_id === tournament.leader_model_id);
   return <div className="screenBody standalone"><h2 className="pageTitle">Что уже произошло</h2>
+    <section className="statsCard"><h3>PAPER-турнир моделей</h3><div className="statsGrid"><div><span>Статус</span><strong>{tournament?.status ?? "Нет данных"}</strong></div><div><span>Активно</span><strong>{n(tournament?.active_models)} из {n(tournament?.registry_models)}</strong></div><div><span>Текущий лидер</span><strong>{leader?.model_id ?? "Ещё нет"}</strong></div><div><span>Переходы / свечи</span><strong>{n(leader?.transitions)} / {n(leader?.minimum_live_bars)}</strong></div><div><span>Медиана после расходов</span><strong className={(leader?.median_return ?? 0) > 0 ? "positive" : "negative"}>{leader ? `${(leader.median_return * 100).toFixed(2)}%` : "—"}</strong></div><div><span>Макс. просадка</span><strong>{leader ? `${(leader.maximum_drawdown * 100).toFixed(2)}%` : "—"}</strong></div></div><p>{leader?.expression ?? "Лидер появится после первого допустимого перехода позиции."}</p><small>Лидер определяется только по живому OOS. Несовместимых с live-движком моделей: {n(tournament?.unsupported_model_ids?.length)}. Новые совместимые модели автоматически включаются в турнир.</small></section>
     <section className="statsCard"><h3>Живой поток</h3><div className="statsGrid"><div><span>Bybit</span><strong>{n(runtime?.bybit_messages)}</strong></div><div><span>Binance</span><strong>{n(runtime?.binance_messages)}</strong></div><div><span>Циклы агентов</span><strong>{n(runtime?.assessment_cycles)}</strong></div><div><span>Стратегия проверена</span><strong>{n(runtime?.strategy_cycles)}</strong></div><div><span>Виртуальные сигналы</span><strong>{n(runtime?.virtual_actions)}</strong></div><div><span>Ожидают результата</span><strong>{n(runtime?.pending_virtual_observations)}</strong></div></div></section>
     <section className="decisionCard"><span>ПОСЛЕДНЕЕ РЕШЕНИЕ</span><strong>{runtime?.last_decision_status ?? "Ещё не было полного решения"}</strong><p>{runtime?.last_decision_reasons?.join(" · ") || "После прогрева здесь появится человеческое объяснение."}</p></section>
     <section className="statsCard"><h3>Стратегии-кандидаты</h3><div className="statsGrid"><div><span>Зарегистрировано</span><strong>{n(runtime?.challenger_registered)}</strong></div><div><span>Независимых проверок</span><strong>{n(runtime?.challenger_evaluations)}</strong></div><div><span>Сигналов-кандидатов</span><strong>{n(runtime?.challenger_signals)}</strong></div><div><span>Конфликтов</span><strong>{n(runtime?.challenger_conflicts)}</strong></div></div><small>Compression breakout · Failed breakout · Balance mean reversion. Все работают только в SHADOW/PAPER; доступ к ордерам отключён.</small></section>
+    <section className="statsCard"><h3>Выбор монет по ожидаемому edge</h3><div className="statsGrid"><div><span>Сейчас выбрано</span><strong>{n(runtime?.cross_sectional_selected?.length)}</strong></div><div><span>Отклонено</span><strong>{n(Object.keys(runtime?.cross_sectional_rejections ?? {}).length)}</strong></div><div><span>Лимит малого счёта</span><strong>2 позиции</strong></div><div><span>Доступ к ордерам</span><strong>{runtime?.cross_sectional_execution_allowed ? "Есть" : "Закрыт"}</strong></div></div>{runtime?.cross_sectional_selected?.map(item=><div className="evidenceRow" key={`${item.strategy_id}-${item.symbol}`}><b>{item.symbol}</b><span>{item.strategy_id} · edge после расходов {Number(item.expected_net_edge_bps).toFixed(2)} bps</span><i className="pending">SHADOW</i></div>)}<small>Ранжирование выполняется между разрешёнными сигналами; отрицательный edge и дублирующая коррелированная экспозиция отсекаются.</small></section>
+    <section className="statsCard"><h3>Фабрика новых гипотез</h3><div className="statsGrid"><div><span>Статус</span><strong>{runtime?.research_external_audit_status ?? "NOT_RUN"}</strong></div><div><span>Сгенерировано</span><strong>{n(runtime?.research_generated_hypotheses)}</strong></div><div><span>Первичный validation</span><strong>{n(runtime?.research_accepted_hypotheses)}</strong></div><div><span>Схема данных</span><strong>{runtime?.research_data_schema_audit ?? "NOT_RUN"}</strong></div></div><small>Формульные гипотезы создаются только на train, затем отдельно проверяются; генератор не имеет доступа к ордерам или sealed holdout.</small></section>
     <section className="statsCard"><h3>Исследовательский оркестратор</h3><div className="statsGrid"><div><span>Завершённых исходов</span><strong>{n(runtime?.orchestration_completed_outcomes)}</strong></div><div><span>Ожидают 15 минут</span><strong>{n(runtime?.orchestration_pending_outcomes)}</strong></div><div><span>Режимных champions</span><strong>{Object.keys(runtime?.orchestration_champions ?? {}).length}</strong></div><div><span>Доступ к ордерам</span><strong>{runtime?.orchestration_execution_allowed ? "Есть" : "Закрыт"}</strong></div></div>{runtime?.orchestration_decisions?.map(item=><div className="evidenceRow" key={item.strategy_id}><b>{item.strategy_id.replace(":v1", "")}</b><span>{item.reason} · исходов {item.completed_outcomes} · режимов {item.independent_regimes}</span><i className={item.stage === "REJECT" ? "fail" : item.stage.includes("PROMOTE") ? "pass" : "pending"}>{item.stage}</i></div>)}<small>Раннее отклонение разрешено. Demo-допуск требует положительной скорректированной нижней границы и минимум двух рыночных режимов.</small></section>
     <section className="statsCard"><h3>Исторический PAPER-архив</h3><div className="statsGrid"><div><span>Состояние</span><strong>{runtime?.history_status === "READY" ? "Готов" : "Собирается"}</strong></div><div><span>Глубина</span><strong>{n(runtime?.history_days)} дней</strong></div><div><span>Свечей</span><strong>{n(runtime?.history_rows_total)}</strong></div><div><span>Holdout</span><strong>{runtime?.history_holdout_sealed ? "Запечатан" : "Нет"}</strong></div></div><small>{runtime?.history_symbols?.join(" · ") || "—"}. История ускоряет отбор, но добавляет {n(runtime?.history_live_oos_credit_added)} к живым OOS.</small></section>
-    <section className="statsCard"><h3>Ускоритель стратегий</h3><div className="statsGrid"><div><span>Состояние</span><strong>{runtime?.research_lab_status === "READY" ? "Завершён" : "Ещё не запускался"}</strong></div><div><span>Запущено вариантов</span><strong>{n(runtime?.research_lab_tested_configs)}</strong></div><div><span>Структур идей</span><strong>{n(runtime?.research_lab_strategy_factory?.structural_templates)}</strong></div><div><span>Досрочно отсечено</span><strong>{n(runtime?.research_lab_early_stopped_configs)}</strong></div><div><span>Полностью проверено</span><strong>{n(runtime?.research_lab_completed_configs)}</strong></div><div><span>Расходы в тесте</span><strong>{n(runtime?.research_lab_cost_bps)} bps</strong></div></div>{runtime?.research_lab_top_candidates?.slice(0, 3).map((item, index)=><div className="evidenceRow" key={`${item.parameters.family}-${index}`}><b>{item.parameters.family} · {(item.parameters.horizon ?? 1) * 5} мин</b><span>{item.parameters.direction_mode ?? "LONG_SHORT"} · validation {(item.validation.median_return * 100).toFixed(2)}% · сделок {item.validation.trades}</span><i className={item.validation_score > 0 ? "pass" : "fail"}>{item.validation_score > 0 ? "Кандидат" : "Отклонить"}</i></div>)}<small>Проверка будущих данных: {runtime?.research_lab_lookahead_audit === "PREFIX_INVARIANCE_PASSED" ? "пройдена" : "нет данных"}. Long/short на 5/15/60 минутах. Holdout не вскрыт, доступ к торговле закрыт.</small></section>
+    <section className="statsCard"><h3>Ускоритель стратегий</h3><div className="statsGrid"><div><span>Состояние</span><strong>{runtime?.research_lab_status === "READY" ? "Завершён" : "Ещё не запускался"}</strong></div><div><span>Запущено вариантов</span><strong>{n(runtime?.research_lab_tested_configs)}</strong></div><div><span>Прошли все критерии</span><strong>{n(runtime?.research_lab_viable_candidates)}</strong></div><div><span>Досрочно отсечено</span><strong>{n(runtime?.research_lab_early_stopped_configs)}</strong></div><div><span>Полностью проверено</span><strong>{n(runtime?.research_lab_completed_configs)}</strong></div><div><span>Расходы в тесте</span><strong>{n(runtime?.research_lab_cost_bps)} bps</strong></div></div>{runtime?.research_lab_top_candidates?.slice(0, 3).map((item, index)=><div className="evidenceRow" key={`${item.parameters.family}-${index}`}><b>{item.parameters.family} · {(item.parameters.horizon ?? 1) * 5} мин</b><span>{item.parameters.direction_mode ?? "LONG_SHORT"} · validation {(item.validation.median_return * 100).toFixed(2)}% · сделок {item.validation.trades}</span><i className={item.validation_score > 0 ? "pass" : "fail"}>{item.validation_score > 0 ? "Кандидат" : "Отклонить"}</i></div>)}<small>Purged walk-forward и cross-sectional портфель включены. Проверка будущих данных: {runtime?.research_lab_lookahead_audit === "PREFIX_INVARIANCE_PASSED" ? "пройдена" : "нет данных"}. Holdout не вскрыт, доступ к торговле закрыт.</small></section>
     <section className="statsCard"><h3>Demo-торговля</h3><div className="statsGrid"><div><span>Подключение</span><strong>{runtime?.testnet_connected ? "Есть" : "Нет"}</strong></div><div><span>Всего тестовых ордеров</span><strong>{n(runtime?.demo_orders_total)}</strong></div><div><span>Открытые ордера</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_orders ?? 0) : "Ещё не сверено"}</strong></div><div><span>Открытые позиции</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_positions ?? 0) : "Ещё не сверено"}</strong></div><div><span>Максимум параллельно</span><strong>{runtime?.max_concurrent_demo_orders ?? 4}</strong></div></div><small>Прочерк означает, что приватное состояние Bybit ещё не сверено. Это не подменяется нулём. Фактический допуск — от 0 до 4 по общему риску и корреляции.</small></section>
     <section className="statsCard"><h3>Startup Guard</h3><div className="statsGrid"><div><span>Сверка после перезапуска</span><strong>{runtime?.startup_reconciliation_status ?? "Нет"}</strong></div><div><span>Ордера на бирже</span><strong>{n(runtime?.startup_open_orders ?? 0)}</strong></div><div><span>Позиции на бирже</span><strong>{n(runtime?.startup_open_positions ?? 0)}</strong></div><div><span>Новые Demo-действия</span><strong>{runtime?.startup_new_demo_actions_allowed ? "Разрешены" : "Заблокированы"}</strong></div></div><p>{runtime?.startup_reconciliation_reasons?.join(" · ") || "Биржевое и локальное состояние согласованы."}</p><small>Atlas не отменяет и не закрывает неизвестные ордера или позиции автоматически.</small></section>
     <section className="evidenceCard"><h3>Обязательные проверки</h3>{readiness.criteria.map((item)=><div className="evidenceRow" key={item.criterion_id}><b>{item.criterion_id}</b><span>{item.summary}</span><i className={item.status.toLowerCase()}>{item.status}</i></div>)}</section>
@@ -224,11 +253,12 @@ export default function Page() {
   const [tab, setTab] = useState<Tab>("home");
   const [runtime, setRuntime] = useState<Runtime | null>(null);
   const [now, setNow] = useState(0);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   useEffect(() => {
     let active = true;
     const refresh = async () => {
       try {
-        const response = await fetch("/api/runtime", { cache: "no-store" });
+        const response = await fetch(`${runtimeUrl}?t=${Date.now()}`, { cache: "no-store" });
         if (response.ok && active) setRuntime(await response.json() as Runtime);
       } catch { /* stale state is shown explicitly */ }
       if (active) setNow(Date.now());
@@ -237,8 +267,28 @@ export default function Page() {
     const poll = window.setInterval(() => { setNow(Date.now()); void refresh(); }, 15_000);
     return () => { active = false; window.clearInterval(poll); };
   }, []);
+  useEffect(() => {
+    setNotificationsEnabled(typeof Notification !== "undefined" && Notification.permission === "granted");
+  }, []);
+  useEffect(() => {
+    const event = runtime?.model_winner_notification;
+    if (!event?.event_id || typeof window === "undefined" || typeof Notification === "undefined") return;
+    const seen = window.localStorage.getItem("atlas-winner-event");
+    if (seen === event.event_id) return;
+    window.localStorage.setItem("atlas-winner-event", event.event_id);
+    if (Notification.permission === "granted") {
+      new Notification("Новый лидер PAPER-турнира", {
+        body: `${event.model_id} · ${event.expression} · медиана ${(event.median_return * 100).toFixed(2)}% · просадка ${(event.maximum_drawdown * 100).toFixed(2)}% · переходов ${event.transitions}`,
+      });
+    }
+  }, [runtime?.model_winner_notification]);
+  const enableNotifications = async () => {
+    if (typeof Notification === "undefined") return;
+    const permission = await Notification.requestPermission();
+    setNotificationsEnabled(permission === "granted");
+  };
   const fresh = useMemo(() => Boolean(runtime?.server_received_at && now - new Date(runtime.server_received_at).getTime() < 90_000), [runtime, now]);
-  return <main><div className="phone"><StatusBar fresh={fresh} />{tab === "home" && <Header />}{tab === "home" ? <Home runtime={runtime} fresh={fresh} now={now} /> : tab === "results" ? <Results runtime={runtime} /> : <Connection runtime={runtime} />}
+  return <main><div className="phone"><StatusBar fresh={fresh} />{tab === "home" && <Header notificationsEnabled={notificationsEnabled} onEnable={()=>void enableNotifications()} />}{tab === "home" ? <Home runtime={runtime} fresh={fresh} now={now} /> : tab === "results" ? <Results runtime={runtime} /> : <Connection runtime={runtime} />}
     <nav aria-label="Основная навигация">{tabs.map((item)=><button key={item.id} className={tab===item.id?"active":""} onClick={()=>setTab(item.id)}><i>{item.icon}</i><span>{item.label}</span></button>)}</nav>
   </div></main>;
 }

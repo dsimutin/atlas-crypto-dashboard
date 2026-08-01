@@ -20,8 +20,10 @@ test("renders the Russian readiness console", async () => {
   assert.match(html, /Нет свежей связи с системой/);
   assert.match(html, /ЧТО ДЕЛАТЬ СЕЙЧАС/);
   assert.match(html, /БЛИЖАЙШАЯ КОНТРОЛЬНАЯ ТОЧКА/);
-  assert.match(html, /0.*из.*200.*независимых OOS-наблюдений/);
-  assert.match(html, /Система не продолжит ждать бесконечно/i);
+  assert.match(html, /ТЕКУЩИЙ PAPER-ДОПУСК/);
+  assert.match(html, /0.*из.*30.*переходов/);
+  assert.match(html, /7 полных дней, 30 переходов/);
+  assert.match(html, /Уведомления о новом лидере/);
 });
 
 test("has no secret inputs or network execution surface", async () => {
