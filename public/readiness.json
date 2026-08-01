@@ -1,0 +1,18 @@
+{
+  "generated_at": "2026-08-01T12:00:00+03:00",
+  "technical_ready": false,
+  "live_allowed": false,
+  "criteria": [
+    {"criterion_id":"D1","status":"PASS","summary":"Целостность данных: gap detection и replay","evidence_id":"stage3-d1"},
+    {"criterion_id":"D4","status":"PASS","summary":"Внешнее подтверждение: dual-route smoke","evidence_id":"stage4-d4"},
+    {"criterion_id":"O1","status":"PENDING","summary":"Offline fixtures PASS; Testnet ожидается","evidence_id":"stage5-o1"},
+    {"criterion_id":"S0","status":"PASS","summary":"Immutable preregistration protocol hash","evidence_id":"stage7-s0"},
+    {"criterion_id":"C0","status":"PENDING","summary":"Cost baseline готов; calibration ожидается","evidence_id":"stage8-c0"},
+    {"criterion_id":"R2","status":"PASS","summary":"Persistent risk gates и restart recovery","evidence_id":"stage10-r2"},
+    {"criterion_id":"O2","status":"PASS","summary":"Offline idempotency lifecycle campaign","evidence_id":"stage11-o2"},
+    {"criterion_id":"P1","status":"PENDING","summary":"Mock PASS; authenticated Testnet ожидается","evidence_id":"stage11-p1"},
+    {"criterion_id":"G1","status":"PASS","summary":"Critical drift автоматически снимает champion","evidence_id":"stage12-g1"},
+    {"criterion_id":"Q1","status":"FAIL","summary":"Полная failure campaign этапа 14 не завершена","evidence_id":"stage13-q1"}
+  ],
+  "blockers": ["O1: PENDING", "C0: PENDING", "P1: PENDING", "Q1: FAIL"]
+}
