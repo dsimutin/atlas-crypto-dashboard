@@ -27,6 +27,9 @@ const runtimeFields = new Set([
   "testnet_connected", "testnet_fee_verified",
   "private_state_synced", "demo_order_canary_status", "demo_orders_total",
   "demo_open_orders", "demo_open_positions",
+  "demo_unmatched_positions",
+  "demo_protection_status", "demo_protected_symbol", "universe_observed_count",
+  "universe_trade_eligible_count", "universe_symbols",
   "max_concurrent_demo_orders",
 ]);
 

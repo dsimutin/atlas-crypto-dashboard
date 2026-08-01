@@ -36,6 +36,12 @@ type Runtime = {
   demo_orders_total?: number;
   demo_open_orders?: number | null;
   demo_open_positions?: number | null;
+  demo_unmatched_positions?: number | null;
+  demo_protection_status?: "NOT_TESTED" | "PASSED" | "FAILED";
+  demo_protected_symbol?: string | null;
+  universe_observed_count?: number;
+  universe_trade_eligible_count?: number;
+  universe_symbols?: string[];
   max_concurrent_demo_orders?: number;
   source_status?: Record<string, string>;
   source_reconnects?: Record<string, number>;
@@ -119,7 +125,11 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
 
     <section className="actionCard"><span>ЧТО ДЕЛАТЬ СЕЙЧАС</span><strong>{action}</strong><small>Обновлено: {runtime?.server_received_at ? new Date(runtime.server_received_at).toLocaleTimeString("ru-RU") : "ожидание"}</small></section>
 
-    <section className="miniGrid userVitals"><article><span>Bybit Demo</span><strong className={demoConnected ? "positive" : "negative"}>{demoConnected ? "Подключён" : "Не подключён"}</strong></article><article><span>Открытые ордера</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_orders ?? 0) : "—"}</strong></article><article><span>Открытые позиции</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_positions ?? 0) : "—"}</strong></article><article><span>Проверка ордера</span><strong>{runtime?.demo_order_canary_status === "PASSED" ? "Пройдена" : runtime?.demo_order_canary_status === "FAILED" ? "Ошибка" : "Впереди"}</strong></article></section>
+    <section className="miniGrid userVitals"><article><span>Bybit Demo</span><strong className={demoConnected ? "positive" : "negative"}>{demoConnected ? "Подключён" : "Не подключён"}</strong></article><article><span>Открытые ордера</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_orders ?? 0) : "—"}</strong></article><article><span>Открытые позиции</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_positions ?? 0) : "—"}</strong><small>{runtime?.demo_unmatched_positions ? "Есть внешняя позиция" : "Сверено"}</small></article><article><span>Проверка ордера</span><strong>{runtime?.demo_order_canary_status === "PASSED" ? "Пройдена" : runtime?.demo_order_canary_status === "FAILED" ? "Ошибка" : "Впереди"}</strong></article></section>
+
+    <section className="checkpointCard"><div><span>ЗАЩИТА ПОЗИЦИИ</span><strong>{runtime?.demo_protection_status === "PASSED" ? "SL · TP · trailing подтверждены Bybit" : "Ещё не подтверждена"}</strong></div><p>{runtime?.demo_protection_status === "PASSED" ? `Demo-тест ${runtime.demo_protected_symbol ?? ""} завершён reduce-only закрытием.` : "До подтверждения серверной защиты автоматические входы запрещены."}</p></section>
+
+    <section className="checkpointCard"><div><span>ДИНАМИЧЕСКИЙ UNIVERSE</span><strong>{n(runtime?.universe_trade_eligible_count)} подходящих · {n(runtime?.universe_observed_count)} в верхнем списке</strong></div><p>{runtime?.universe_symbols?.join(" · ") || "Сканирование Bybit и внешнего подтверждения ещё не завершено"}</p></section>
 
     <section className="dataCard"><div><span>ДО ДОПУСКА РЕАЛЬНЫХ ДЕНЕГ</span><strong>{oos} из {required} независимых OOS-наблюдений</strong></div><b>{percent}%</b><div className="dataTrack"><i style={{width: `${percent}%`}} /></div><div className="estimate"><span>Оценка срока</span><strong>{launchEstimate}</strong></div><small>{oos === 0 ? "Если сигналов не будет 7 дней, система не продолжит ждать бесконечно — гипотеза получит статус пересмотра." : "Оценка пересчитывается по фактической скорости появления независимых наблюдений."}</small></section>
 
@@ -137,7 +147,7 @@ function Results({ runtime }: { runtime: Runtime | null }) {
   return <div className="screenBody standalone"><h2 className="pageTitle">Что уже произошло</h2>
     <section className="statsCard"><h3>Живой поток</h3><div className="statsGrid"><div><span>Bybit</span><strong>{n(runtime?.bybit_messages)}</strong></div><div><span>Binance</span><strong>{n(runtime?.binance_messages)}</strong></div><div><span>Циклы агентов</span><strong>{n(runtime?.assessment_cycles)}</strong></div><div><span>Стратегия проверена</span><strong>{n(runtime?.strategy_cycles)}</strong></div><div><span>Виртуальные сигналы</span><strong>{n(runtime?.virtual_actions)}</strong></div><div><span>Ожидают результата</span><strong>{n(runtime?.pending_virtual_observations)}</strong></div></div></section>
     <section className="decisionCard"><span>ПОСЛЕДНЕЕ РЕШЕНИЕ</span><strong>{runtime?.last_decision_status ?? "Ещё не было полного решения"}</strong><p>{runtime?.last_decision_reasons?.join(" · ") || "После прогрева здесь появится человеческое объяснение."}</p></section>
-    <section className="statsCard"><h3>Demo-торговля</h3><div className="statsGrid"><div><span>Подключение</span><strong>{runtime?.testnet_connected ? "Есть" : "Нет"}</strong></div><div><span>Всего тестовых ордеров</span><strong>{n(runtime?.demo_orders_total)}</strong></div><div><span>Открытые ордера</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_orders ?? 0) : "Ещё не сверено"}</strong></div><div><span>Открытые позиции</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_positions ?? 0) : "Ещё не сверено"}</strong></div><div><span>Лимит параллельно</span><strong>{runtime?.max_concurrent_demo_orders ?? 2}</strong></div></div><small>Прочерк означает, что приватное состояние Bybit ещё не сверено. Это не подменяется нулём. Параллельные коррелированные сделки не считаются независимыми наблюдениями.</small></section>
+    <section className="statsCard"><h3>Demo-торговля</h3><div className="statsGrid"><div><span>Подключение</span><strong>{runtime?.testnet_connected ? "Есть" : "Нет"}</strong></div><div><span>Всего тестовых ордеров</span><strong>{n(runtime?.demo_orders_total)}</strong></div><div><span>Открытые ордера</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_orders ?? 0) : "Ещё не сверено"}</strong></div><div><span>Открытые позиции</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_positions ?? 0) : "Ещё не сверено"}</strong></div><div><span>Максимум параллельно</span><strong>{runtime?.max_concurrent_demo_orders ?? 4}</strong></div></div><small>Прочерк означает, что приватное состояние Bybit ещё не сверено. Это не подменяется нулём. Фактический допуск — от 0 до 4 по общему риску и корреляции.</small></section>
     <section className="evidenceCard"><h3>Обязательные проверки</h3>{readiness.criteria.map((item)=><div className="evidenceRow" key={item.criterion_id}><b>{item.criterion_id}</b><span>{item.summary}</span><i className={item.status.toLowerCase()}>{item.status}</i></div>)}</section>
   </div>;
 }
