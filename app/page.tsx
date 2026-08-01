@@ -85,7 +85,7 @@ function StatusBar({ fresh }: { fresh: boolean }) {
 }
 
 function Header() {
-  return <header><div className="logo">A</div><div><h1>AI Crypto System</h1><p>Наблюдение и проверка стратегии</p></div><div className="bell">♧</div></header>;
+  return <header><div className="logo">A</div><div><h1>Atlas Crypto System</h1><p>Наблюдение и проверка стратегии</p></div><div className="bell">♧</div></header>;
 }
 
 function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean; now: number }) {

@@ -14,14 +14,14 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   metadataBase: new URL("http://localhost:3000"),
-  title: "Crypto Agent — Readiness Console",
+  title: "Atlas Crypto System — Readiness",
   description: "Локальная read-only панель доказательств и готовности системы.",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
   },
   openGraph: {
-    title: "Crypto Agent — Readiness Console",
+    title: "Atlas Crypto System — Readiness",
     description: "Read-only контроль доказательств и ограничений.",
     images: ["/og.png"],
   },

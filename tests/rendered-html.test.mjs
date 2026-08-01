@@ -16,7 +16,7 @@ test("renders the Russian readiness console", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /Crypto Agent — Readiness Console/);
+  assert.match(html, /Atlas Crypto System — Readiness/);
   assert.match(html, /Нет свежей связи с системой/);
   assert.match(html, /ЧТО ДЕЛАТЬ СЕЙЧАС/);
   assert.match(html, /БЛИЖАЙШАЯ КОНТРОЛЬНАЯ ТОЧКА/);
