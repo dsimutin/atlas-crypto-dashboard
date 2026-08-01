@@ -18,11 +18,11 @@ test("renders the Russian readiness console", async () => {
   const html = await response.text();
   assert.match(html, /Crypto Agent — Readiness Console/);
   assert.match(html, /Система ещё проверяется/);
-  assert.match(html, /OBSERVE_ONLY/);
   assert.match(html, /Запуск торговли недоступен/);
-  assert.match(html, /94 PASS/);
-  assert.match(html, /ПОЧЕМУ СИСТЕМА НЕ ГОТОВА/);
-  assert.match(html, /Этап 14 · Полная failure campaign/);
+  assert.match(html, /ПОЧЕМУ ЗАПУСК НЕДОСТУПЕН/);
+  assert.match(html, /Накопление real-data evidence/);
+  assert.match(html, /0 из 200 OOS-наблюдений/);
+  assert.match(html, /Торговый контур не подключён/);
 });
 
 test("has no secret inputs or network execution surface", async () => {

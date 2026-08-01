@@ -12,7 +12,7 @@
     {"criterion_id":"O2","status":"PASS","summary":"Offline idempotency lifecycle campaign","evidence_id":"stage11-o2"},
     {"criterion_id":"P1","status":"PENDING","summary":"Mock PASS; authenticated Testnet ожидается","evidence_id":"stage11-p1"},
     {"criterion_id":"G1","status":"PASS","summary":"Critical drift автоматически снимает champion","evidence_id":"stage12-g1"},
-    {"criterion_id":"Q1","status":"FAIL","summary":"Полная failure campaign этапа 14 не завершена","evidence_id":"stage13-q1"}
+    {"criterion_id":"Q1","status":"FAIL","summary":"Offline campaign PASS; real-data и Testnet evidence не завершены","evidence_id":"stage14-q1"}
   ],
   "blockers": ["O1: PENDING", "C0: PENDING", "P1: PENDING", "Q1: FAIL"]
 }
