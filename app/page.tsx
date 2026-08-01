@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import readiness from "../public/readiness.json";
 
-const runtimeUrl = "https://api.github.com/gists/1a0269ca6ae611a53f29750b7cf7a84d";
+const runtimeUrl = "https://gist.githubusercontent.com/dsimutin/1a0269ca6ae611a53f29750b7cf7a84d/raw/progress.json";
 
 type Tab = "home" | "results" | "connection";
 type Leader = {
@@ -210,7 +210,7 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
       <div className="sourceLine"><span className={runtime?.source_status?.bybit === "CONNECTED" ? "dot ok" : "dot"} />Bybit <b>{runtime?.source_status?.bybit ?? "нет данных"}</b><span className={runtime?.source_status?.binance === "CONNECTED" ? "dot ok" : "dot"} />Binance <b>{runtime?.source_status?.binance ?? "нет данных"}</b></div>
     </section>
 
-    <section className="actionCard"><span>ЧТО ДЕЛАТЬ СЕЙЧАС</span><strong>{action}</strong><small>Обновлено: {runtime?.server_received_at ? new Date(runtime.server_received_at).toLocaleTimeString("ru-RU") : "ожидание"}</small></section>
+    <section className="actionCard"><span>ЧТО ДЕЛАТЬ СЕЙЧАС</span><strong>{action}</strong><small>Обновлено: {(runtime?.server_received_at ?? runtime?.updated_at) ? new Date((runtime?.server_received_at ?? runtime?.updated_at) as string).toLocaleTimeString("ru-RU") : "ожидание"}</small></section>
 
     <section className="checkpointCard"><div><span>КОНТРОЛЬ НЕПРЕРЫВНОСТИ</span><strong className={runtime?.watchdog_status === "HEALTHY" ? "positive" : "negative"}>{runtime?.watchdog_status === "HEALTHY" ? "Сбор контролируется" : runtime?.watchdog_status ?? "Запускается"}</strong></div><p>{runtime?.watchdog_reasons?.join(" · ") || "Watchdog раз в минуту проверяет свежесть снимка и оба источника; при остановке показывает уведомление macOS."}</p></section>
 
@@ -265,17 +265,19 @@ export default function Page() {
   const [runtime, setRuntime] = useState<Runtime | null>(null);
   const [now, setNow] = useState(0);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
     const refresh = async () => {
       try {
         const response = await fetch(`${runtimeUrl}?t=${Date.now()}`, { cache: "no-store" });
         if (response.ok && active) {
-          const gist = await response.json() as { files?: Record<string, { content?: string }> };
-          const content = gist.files?.["progress.json"]?.content;
-          if (content) setRuntime(JSON.parse(content) as Runtime);
+          setRuntime(await response.json() as Runtime);
+          setFetchError(null);
+        } else if (active) {
+          setFetchError(`HTTP ${response.status}`);
         }
-      } catch { /* stale state is shown explicitly */ }
+      } catch (error) { if (active) setFetchError(error instanceof Error ? error.message : "network error"); }
       if (active) setNow(Date.now());
     };
     void refresh();
@@ -304,9 +306,9 @@ export default function Page() {
   };
   const fresh = useMemo(() => {
     const timestamp = runtime?.server_received_at ?? runtime?.updated_at;
-    return Boolean(timestamp && now - new Date(timestamp).getTime() < 180_000);
+    return Boolean(timestamp && now - new Date(timestamp).getTime() < 600_000);
   }, [runtime, now]);
-  return <main><div className="phone"><StatusBar fresh={fresh} />{tab === "home" && <Header notificationsEnabled={notificationsEnabled} onEnable={()=>void enableNotifications()} />}{tab === "home" ? <Home runtime={runtime} fresh={fresh} now={now} /> : tab === "results" ? <Results runtime={runtime} /> : <Connection runtime={runtime} />}
+  return <main><div className="phone"><StatusBar fresh={fresh} />{fetchError && <div className="infoBox">Ошибка обновления панели: {fetchError}. Последний корректный снимок сохранён.</div>}{tab === "home" && <Header notificationsEnabled={notificationsEnabled} onEnable={()=>void enableNotifications()} />}{tab === "home" ? <Home runtime={runtime} fresh={fresh} now={now} /> : tab === "results" ? <Results runtime={runtime} /> : <Connection runtime={runtime} />}
     <nav aria-label="Основная навигация">{tabs.map((item)=><button key={item.id} className={tab===item.id?"active":""} onClick={()=>setTab(item.id)}><i>{item.icon}</i><span>{item.label}</span></button>)}</nav>
   </div></main>;
 }
