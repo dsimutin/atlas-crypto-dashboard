@@ -44,6 +44,8 @@ const runtimeFields = new Set([
   "research_compatibility_protocol", "research_compatibility_updated_at",
   "research_compatibility_backends", "research_external_proposals",
   "research_external_rejections",
+  "research_feedback_protocol", "research_feedback_evaluated",
+  "research_feedback_accepted", "research_feedback_rejected", "research_feedback_results",
   "factor_model_paper", "factor_model_tournament", "model_winner_notification",
   "startup_reconciliation_status", "startup_reconciliation_checked_at",
   "startup_open_orders", "startup_open_positions", "startup_external_orders",
@@ -52,6 +54,7 @@ const runtimeFields = new Set([
   "qualified_oos_observations", "required_oos_observations",
   "modeled_capital_usdt", "risk_per_trade_fraction", "risk_budget_usdt",
   "execution_network_available", "source_status", "source_reconnects", "source_errors",
+  "watchdog_status", "watchdog_checked_at", "watchdog_reasons",
   "testnet_connected", "testnet_fee_verified",
   "private_state_synced", "demo_order_canary_status", "demo_orders_total",
   "demo_open_orders", "demo_open_positions",
@@ -61,6 +64,10 @@ const runtimeFields = new Set([
   "universe_quality_samples", "universe_quality_ready_count",
   "universe_quality_required_samples_per_symbol",
   "max_concurrent_demo_orders",
+  "external_context_status", "external_context_collected_at",
+  "external_context_sources_ready", "external_context_sources_total",
+  "microstructure_health",
+  "microstructure_research",
 ]);
 
 function jsonResponse(value: unknown, status = 200): Response {

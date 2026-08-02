@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import readiness from "../public/readiness.json";
 
-const runtimeUrl = "https://gist.githubusercontent.com/dsimutin/1a0269ca6ae611a53f29750b7cf7a84d/raw/progress.json";
+const runtimeUrl = "/api/runtime";
 
 type Tab = "home" | "results" | "connection";
 type Leader = {
@@ -101,9 +101,14 @@ type Runtime = {
   research_data_schema_audit?: string;
   research_compatibility_protocol?: string;
   research_compatibility_updated_at?: string;
-  research_compatibility_backends?: Record<string, { project?: string; available_in_controller_environment?: boolean; integration?: string }>;
+  research_compatibility_backends?: Record<string, { project?: string; available_in_controller_environment?: boolean; integration?: string; source_checkout_available?: boolean }>;
   research_external_proposals?: number;
   research_external_rejections?: number;
+  research_feedback_protocol?: string;
+  research_feedback_evaluated?: number;
+  research_feedback_accepted?: number;
+  research_feedback_rejected?: number;
+  research_feedback_results?: Array<{ hypothesis_id?: string; expression?: string; proposal_source?: string; accepted?: boolean; reasons?: string[] }>;
   orchestration_decisions?: Array<{
     strategy_id: string;
     stage: string;
@@ -131,6 +136,16 @@ type Runtime = {
   watchdog_status?: string;
   watchdog_checked_at?: string;
   watchdog_reasons?: string[];
+  external_context_status?: string;
+  external_context_collected_at?: string;
+  external_context_sources_ready?: number;
+  external_context_sources_total?: number;
+  microstructure_health?: { checked_at?: string; symbols?: Record<string, {
+    bybit_event_age_ms?: number | null; bybit_book_age_ms?: number | null;
+    binance_event_age_ms?: number | null; binance_depth_age_ms?: number | null;
+    binance_depth_valid?: boolean; binance_depth_gaps?: number; binance_invalid_books?: number;
+  }> };
+  microstructure_research?: { status?: string; execution_allowed?: boolean; features?: Record<string,string>; promotion_rule?: string };
 };
 
 const tabs: { id: Tab; icon: string; label: string }[] = [
@@ -200,12 +215,6 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
     action = runtime?.cost_blocked_cycles ? "Следующее действие — безопасно подключить Bybit Demo для измерения комиссии" : "Ничего делать не нужно до следующей контрольной точки";
   }
 
-  let launchEstimate = "Пока не определяется";
-  if (oos > 0 && first) {
-    const daysPerObservation = Math.max(0.01, (now - first.getTime()) / 86_400_000 / oos);
-    launchEstimate = `≈ ${Math.ceil((required - oos) * daysPerObservation)} дн. при текущем темпе`;
-  }
-
   return <div className="screenBody">
     <section className={`launchCard ${fresh ? "pendingGlow" : "offline"}`}>
       <div className="launchIntro"><div className="progressRing"><strong>{percent}%</strong></div><div><span className="eyebrow">ТЕКУЩЕЕ СОСТОЯНИЕ</span><h2>{title}</h2><p>{explanation}</p></div></div>
@@ -238,13 +247,15 @@ function Results({ runtime }: { runtime: Runtime | null }) {
   const tournament = runtime?.factor_model_tournament;
   const leader = tournament?.leaderboard?.find(item => item.model_id === tournament.leader_model_id);
   return <div className="screenBody standalone"><h2 className="pageTitle">Что уже произошло</h2>
-    <section className="statsCard"><h3>PAPER-турнир моделей</h3><div className="statsGrid"><div><span>Статус</span><strong>{tournament?.status ?? "Нет данных"}</strong></div><div><span>Активно</span><strong>{n(tournament?.active_models)} из {n(tournament?.registry_models)}</strong></div><div><span>Текущий лидер</span><strong>{leader?.model_id ?? "Ещё нет"}</strong></div><div><span>Переходы / свечи</span><strong>{n(leader?.transitions)} / {n(leader?.minimum_live_bars)}</strong></div><div><span>Медиана после расходов</span><strong className={(leader?.median_return ?? 0) > 0 ? "positive" : "negative"}>{leader ? `${(leader.median_return * 100).toFixed(2)}%` : "—"}</strong></div><div><span>Макс. просадка</span><strong>{leader ? `${(leader.maximum_drawdown * 100).toFixed(2)}%` : "—"}</strong></div></div><p>{leader?.expression ?? "Лидер появится после первого допустимого перехода позиции."}</p><small>Лидер определяется только по живому OOS. Несовместимых с live-движком моделей: {n(tournament?.unsupported_model_ids?.length)}. Новые совместимые модели автоматически включаются в турнир.</small></section>
+    <section className="statsCard"><h3>Микроструктура и внешние источники</h3><div className="statsGrid"><div><span>Внешний контекст</span><strong className={runtime?.external_context_status === "READY" ? "positive" : "warning"}>{runtime?.external_context_status ?? "Нет данных"}</strong></div><div><span>Источники</span><strong>{n(runtime?.external_context_sources_ready)} из {n(runtime?.external_context_sources_total)}</strong></div><div><span>Символы depth</span><strong>{n(Object.keys(runtime?.microstructure_health?.symbols ?? {}).length)}</strong></div></div>{Object.entries(runtime?.microstructure_health?.symbols ?? {}).map(([symbol,item])=><div className="evidenceRow" key={symbol}><b>{symbol}</b><span>Bybit depth {item.bybit_book_age_ms ?? "—"} ms · Binance depth {item.binance_depth_age_ms ?? "—"} ms · gaps {n(item.binance_depth_gaps)}</span><i className={item.binance_depth_valid ? "pass" : "fail"}>{item.binance_depth_valid ? "Синхронен" : "Невалиден"}</i></div>)}<small>Deribit BTC/ETH, CoinGecko и GeckoTerminal обновляются отдельно и не имеют доступа к исполнению. Depth-контроль отслеживает свежесть, разрывы последовательности и некорректные стаканы.</small></section>
+    <section className="statsCard"><h3>PAPER-турнир моделей</h3><div className="statsGrid"><div><span>Статус</span><strong>{tournament?.status ?? "Нет данных"}</strong></div><div><span>Активно</span><strong>{n(tournament?.active_models)} из {n(tournament?.registry_models)}</strong></div><div><span>Текущий лидер</span><strong>{leader?.model_id ?? "Ещё нет"}</strong></div><div><span>Переходы / свечи</span><strong>{n(leader?.transitions)} / {n(leader?.minimum_live_bars)}</strong></div><div><span>Медиана после расходов</span><strong className={(leader?.median_return ?? 0) > 0 ? "positive" : "negative"}>{leader ? `${(leader.median_return * 100).toFixed(2)}%` : "—"}</strong></div><div><span>Макс. просадка</span><strong>{leader ? `${(leader.maximum_drawdown * 100).toFixed(2)}%` : "—"}</strong></div></div><p>{leader?.expression ?? "Лидер появится после первого допустимого перехода позиции."}</p>{tournament?.leaderboard?.slice(0,10).map((item,index)=><div className="evidenceRow" key={item.model_id}><b>{index + 1}. {item.model_id}</b><span>{item.expression} · OOS {item.minimum_live_bars} свечей · {item.transitions} переходов</span><i className={item.model_id === tournament.leader_model_id ? "pass" : "pending"}>{item.status}</i></div>)}<small>Каждый model ID сохраняет собственную OOS-историю при перезапусках и смене лидера. Архивных поколений: {n((tournament as { archived_model_ids?: string[] } | undefined)?.archived_model_ids?.length)}. Несовместимых с live-движком моделей: {n(tournament?.unsupported_model_ids?.length)}.</small></section>
     <section className="statsCard"><h3>Живой поток</h3><div className="statsGrid"><div><span>Bybit</span><strong>{n(runtime?.bybit_messages)}</strong></div><div><span>Binance</span><strong>{n(runtime?.binance_messages)}</strong></div><div><span>Циклы агентов</span><strong>{n(runtime?.assessment_cycles)}</strong></div><div><span>Стратегия проверена</span><strong>{n(runtime?.strategy_cycles)}</strong></div><div><span>Виртуальные сигналы</span><strong>{n(runtime?.virtual_actions)}</strong></div><div><span>Ожидают результата</span><strong>{n(runtime?.pending_virtual_observations)}</strong></div></div></section>
     <section className="decisionCard"><span>ПОСЛЕДНЕЕ РЕШЕНИЕ</span><strong>{runtime?.last_decision_status ?? "Ещё не было полного решения"}</strong><p>{runtime?.last_decision_reasons?.join(" · ") || "После прогрева здесь появится человеческое объяснение."}</p></section>
     <section className="statsCard"><h3>Стратегии-кандидаты</h3><div className="statsGrid"><div><span>Зарегистрировано</span><strong>{n(runtime?.challenger_registered)}</strong></div><div><span>Независимых проверок</span><strong>{n(runtime?.challenger_evaluations)}</strong></div><div><span>Сигналов-кандидатов</span><strong>{n(runtime?.challenger_signals)}</strong></div><div><span>Конфликтов</span><strong>{n(runtime?.challenger_conflicts)}</strong></div></div><small>Compression breakout · Failed breakout · Balance mean reversion. Все работают только в SHADOW/PAPER; доступ к ордерам отключён.</small></section>
     <section className="statsCard"><h3>Выбор монет по ожидаемому edge</h3><div className="statsGrid"><div><span>Сейчас выбрано</span><strong>{n(runtime?.cross_sectional_selected?.length)}</strong></div><div><span>Отклонено</span><strong>{n(Object.keys(runtime?.cross_sectional_rejections ?? {}).length)}</strong></div><div><span>Лимит малого счёта</span><strong>2 позиции</strong></div><div><span>Доступ к ордерам</span><strong>{runtime?.cross_sectional_execution_allowed ? "Есть" : "Закрыт"}</strong></div></div>{runtime?.cross_sectional_selected?.map(item=><div className="evidenceRow" key={`${item.strategy_id}-${item.symbol}`}><b>{item.symbol}</b><span>{item.strategy_id} · edge после расходов {Number(item.expected_net_edge_bps).toFixed(2)} bps</span><i className="pending">SHADOW</i></div>)}<small>Ранжирование выполняется между разрешёнными сигналами; отрицательный edge и дублирующая коррелированная экспозиция отсекаются.</small></section>
     <section className="statsCard"><h3>Фабрика новых гипотез</h3><div className="statsGrid"><div><span>Статус</span><strong>{runtime?.research_external_audit_status ?? "NOT_RUN"}</strong></div><div><span>Сгенерировано</span><strong>{n(runtime?.research_generated_hypotheses)}</strong></div><div><span>Первичный validation</span><strong>{n(runtime?.research_accepted_hypotheses)}</strong></div><div><span>Схема данных</span><strong>{runtime?.research_data_schema_audit ?? "NOT_RUN"}</strong></div></div><small>Формульные гипотезы создаются только на train, затем отдельно проверяются; генератор не имеет доступа к ордерам или sealed holdout.</small></section>
-    <section className="statsCard"><h3>Совместимость research-инструментов</h3><div className="statsGrid"><div><span>Протокол</span><strong>{runtime?.research_compatibility_protocol ?? "Запускается"}</strong></div><div><span>Внешних предложений</span><strong>{n(runtime?.research_external_proposals)}</strong></div><div><span>Отклонено схемой</span><strong>{n(runtime?.research_external_rejections)}</strong></div><div><span>Доступных backend</span><strong>{Object.values(runtime?.research_compatibility_backends ?? {}).filter(item=>item.available_in_controller_environment).length}</strong></div></div>{Object.entries(runtime?.research_compatibility_backends ?? {}).map(([name,item])=><div className="evidenceRow" key={name}><b>{name}</b><span>{item.project} · {item.integration}</span><i className={item.available_in_controller_environment ? "pass" : "pending"}>{item.available_in_controller_environment ? "Доступен" : "Изолирован"}</i></div>)}<small>RD-Agent, Qlib, AlphaGen, QuantaAlpha, DEAP/gplearn, Optuna и Freqtrade обмениваются только нормализованными JSON-предложениями. Ни один research-backend не получает доступ к ордерам или sealed holdout.</small></section>
+    <section className="statsCard"><h3>Совместимость research-инструментов</h3><div className="statsGrid"><div><span>Протокол</span><strong>{runtime?.research_compatibility_protocol ?? "Запускается"}</strong></div><div><span>Внешних предложений</span><strong>{n(runtime?.research_external_proposals)}</strong></div><div><span>Отклонено схемой</span><strong>{n(runtime?.research_external_rejections)}</strong></div><div><span>Запущенных backend</span><strong>{Object.values(runtime?.research_compatibility_backends ?? {}).filter(item=>item.available_in_controller_environment).length}</strong></div></div>{Object.entries(runtime?.research_compatibility_backends ?? {}).map(([name,item])=><div className="evidenceRow" key={name}><b>{name}</b><span>{item.project} · {item.integration}</span><i className={item.available_in_controller_environment ? "pass" : "pending"}>{item.available_in_controller_environment ? "Запущен" : item.source_checkout_available ? "Код подключён" : "Не установлен"}</i></div>)}<small>RD-Agent, Qlib, AlphaGen, QuantaAlpha, DEAP/gplearn и дополнительные OSS обмениваются только нормализованными JSON-предложениями. Ни один research-backend не получает доступ к ордерам или sealed holdout.</small></section>
+    <section className="statsCard"><h3>Обратная связь генераторам</h3><div className="statsGrid"><div><span>Протокол</span><strong>{runtime?.research_feedback_protocol ?? "После цикла"}</strong></div><div><span>Проверено</span><strong>{n(runtime?.research_feedback_evaluated)}</strong></div><div><span>Принято</span><strong>{n(runtime?.research_feedback_accepted)}</strong></div><div><span>Отклонено</span><strong>{n(runtime?.research_feedback_rejected)}</strong></div></div>{runtime?.research_feedback_results?.slice(-5).map(item=><div className="evidenceRow" key={`${item.proposal_source}-${item.hypothesis_id}`}><b>{item.proposal_source ?? "external"}</b><span>{item.expression} · {item.reasons?.join(" · ")}</span><i className={item.accepted ? "pass" : "fail"}>{item.accepted ? "Принято" : "Учтено"}</i></div>)}<small>Причины отклонения возвращаются Qlib, RD-Agent и evolutionary backend в следующем цикле, чтобы не повторять те же гипотезы.</small></section>
     <section className="statsCard"><h3>Исследовательский оркестратор</h3><div className="statsGrid"><div><span>Завершённых исходов</span><strong>{n(runtime?.orchestration_completed_outcomes)}</strong></div><div><span>Ожидают 15 минут</span><strong>{n(runtime?.orchestration_pending_outcomes)}</strong></div><div><span>Режимных champions</span><strong>{Object.keys(runtime?.orchestration_champions ?? {}).length}</strong></div><div><span>Доступ к ордерам</span><strong>{runtime?.orchestration_execution_allowed ? "Есть" : "Закрыт"}</strong></div></div>{runtime?.orchestration_decisions?.map(item=><div className="evidenceRow" key={item.strategy_id}><b>{item.strategy_id.replace(":v1", "")}</b><span>{item.reason} · исходов {item.completed_outcomes} · режимов {item.independent_regimes}</span><i className={item.stage === "REJECT" ? "fail" : item.stage.includes("PROMOTE") ? "pass" : "pending"}>{item.stage}</i></div>)}<small>Раннее отклонение разрешено. Demo-допуск требует положительной скорректированной нижней границы и минимум двух рыночных режимов.</small></section>
     <section className="statsCard"><h3>Исторический PAPER-архив</h3><div className="statsGrid"><div><span>Состояние</span><strong>{runtime?.history_status === "READY" ? "Готов" : "Собирается"}</strong></div><div><span>Глубина</span><strong>{n(runtime?.history_days)} дней</strong></div><div><span>Свечей</span><strong>{n(runtime?.history_rows_total)}</strong></div><div><span>Holdout</span><strong>{runtime?.history_holdout_sealed ? "Запечатан" : "Нет"}</strong></div></div><small>{runtime?.history_symbols?.join(" · ") || "—"}. История ускоряет отбор, но добавляет {n(runtime?.history_live_oos_credit_added)} к живым OOS.</small></section>
     <section className="statsCard"><h3>Ускоритель стратегий</h3><div className="statsGrid"><div><span>Состояние</span><strong>{runtime?.research_lab_status === "READY" ? "Завершён" : "Ещё не запускался"}</strong></div><div><span>Запущено вариантов</span><strong>{n(runtime?.research_lab_tested_configs)}</strong></div><div><span>Прошли все критерии</span><strong>{n(runtime?.research_lab_viable_candidates)}</strong></div><div><span>Досрочно отсечено</span><strong>{n(runtime?.research_lab_early_stopped_configs)}</strong></div><div><span>Полностью проверено</span><strong>{n(runtime?.research_lab_completed_configs)}</strong></div><div><span>Расходы в тесте</span><strong>{n(runtime?.research_lab_cost_bps)} bps</strong></div></div>{runtime?.research_lab_top_candidates?.slice(0, 3).map((item, index)=><div className="evidenceRow" key={`${item.parameters.family}-${index}`}><b>{item.parameters.family} · {(item.parameters.horizon ?? 1) * 5} мин</b><span>{item.parameters.direction_mode ?? "LONG_SHORT"} · validation {(item.validation.median_return * 100).toFixed(2)}% · сделок {item.validation.trades}</span><i className={item.validation_score > 0 ? "pass" : "fail"}>{item.validation_score > 0 ? "Кандидат" : "Отклонить"}</i></div>)}<small>Purged walk-forward и cross-sectional портфель включены. Проверка будущих данных: {runtime?.research_lab_lookahead_audit === "PREFIX_INVARIANCE_PASSED" ? "пройдена" : "нет данных"}. Holdout не вскрыт, доступ к торговле закрыт.</small></section>
@@ -266,7 +277,9 @@ export default function Page() {
   const [tab, setTab] = useState<Tab>("home");
   const [runtime, setRuntime] = useState<Runtime | null>(null);
   const [now, setNow] = useState(0);
-  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(
+    () => typeof Notification !== "undefined" && Notification.permission === "granted",
+  );
   const [fetchError, setFetchError] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
@@ -285,9 +298,6 @@ export default function Page() {
     void refresh();
     const poll = window.setInterval(() => { setNow(Date.now()); void refresh(); }, 90_000);
     return () => { active = false; window.clearInterval(poll); };
-  }, []);
-  useEffect(() => {
-    setNotificationsEnabled(typeof Notification !== "undefined" && Notification.permission === "granted");
   }, []);
   useEffect(() => {
     const event = runtime?.model_winner_notification;
