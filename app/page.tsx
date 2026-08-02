@@ -175,6 +175,36 @@ function relativeUntil(target: Date, now: number): string {
   return `${Math.ceil(hours / 24)} дн.`;
 }
 
+function ageLabel(value: string | undefined, now: number): string {
+  if (!value) return "время снимка неизвестно";
+  const seconds = Math.max(0, Math.floor((now - new Date(value).getTime()) / 1000));
+  if (seconds < 60) return `${seconds} сек. назад`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} мин. назад`;
+  return `${Math.floor(seconds / 3600)} ч. назад`;
+}
+
+function sourceLabel(status: string | undefined, fresh: boolean): string {
+  if (!fresh && status === "CONNECTED") return "последнее: подключён";
+  return ({CONNECTED:"подключён",CONNECTING:"подключается",RECONNECTING:"переподключается",STARTING:"запускается",STOPPED:"остановлен"}[status ?? ""] ?? status ?? "нет данных");
+}
+
+function watchdogSummary(reasons: string[] | undefined): string {
+  if (!reasons?.length) return "Watchdog раз в минуту проверяет свежесть снимка и оба источника; при остановке показывает уведомление macOS.";
+  const disconnected = reasons.filter(item => item.endsWith("is not connected")).map(item => item.split(" ")[0]);
+  const bybit = new Set<string>();
+  const binance = new Set<string>();
+  reasons.forEach(item => {
+    const symbol = item.split(" ")[0];
+    if (item.includes("bybit_book_age_ms")) bybit.add(symbol);
+    if (item.includes("binance_depth_age_ms") || item.includes("Binance depth is invalid")) binance.add(symbol);
+  });
+  const parts: string[] = [];
+  if (disconnected.length) parts.push(`Нет соединения: ${disconnected.join(", ")}`);
+  if (bybit.size) parts.push(`Устарел стакан Bybit: ${[...bybit].join(", ")}`);
+  if (binance.size) parts.push(`Устарел или неполон стакан Binance: ${[...binance].join(", ")}`);
+  return parts.join(". ") || `${reasons.length} технических причин сохранены в диагностике`;
+}
+
 function StatusBar({ fresh }: { fresh: boolean }) {
   return <div className="statusbar"><strong>{fresh ? "● Система на связи" : "○ Нет свежих данных"}</strong><span>SHADOW · READ ONLY</span></div>;
 }
@@ -189,14 +219,24 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
   const required = governor?.required_transitions ?? 30;
   const transitionPercent = Math.min(100, oos / required * 100);
   const barPercent = Math.min(100, (governor?.minimum_live_bars ?? 0) / (governor?.required_live_bars ?? 2016) * 100);
-  const percent = Math.round((transitionPercent + barPercent) / 2);
-  const completed = runtime?.completed_cycles ?? 0;
-  const technical = runtime?.technical_block_cycles ?? 0;
   const first = runtime?.first_observation_at ? new Date(runtime.first_observation_at) : null;
   const reviewAt = first ? new Date(first.getTime() + 7 * 86_400_000) : null;
+  const dayPercent = first ? Math.min(100, Math.max(0, (now - first.getTime()) / (7 * 86_400_000) * 100)) : 0;
+  // Every mandatory criterion must pass, so an average is misleading when one
+  // of them is still zero. The ring now represents actual Demo readiness.
+  const percent = Math.round(Math.min(transitionPercent, barPercent, dayPercent));
+  const completed = runtime?.completed_cycles ?? 0;
+  const technical = runtime?.technical_block_cycles ?? 0;
   const reviewDue = reviewAt ? now >= reviewAt.getTime() : false;
   const connected = runtime?.source_status?.bybit === "CONNECTED" && runtime?.source_status?.binance === "CONNECTED";
   const demoConnected = Boolean(runtime?.testnet_connected);
+  const tournament = runtime?.factor_model_tournament;
+  const leader = tournament?.leaderboard?.find(item => item.model_id === tournament.leader_model_id) ?? tournament?.leaderboard?.[0];
+  const remainingBars = Math.max(0, (governor?.required_live_bars ?? 2016) - (governor?.minimum_live_bars ?? 0));
+  const remainingTransitions = Math.max(0, required - oos);
+  const barsReadyAt = new Date(now + remainingBars * 5 * 60_000);
+  const earliestReview = reviewAt && reviewAt > barsReadyAt ? reviewAt : barsReadyAt;
+  const snapshotTime = runtime?.server_received_at ?? runtime?.updated_at;
 
   let title = "Получаем состояние системы";
   let explanation = "Дашборд ждёт первый защищённый снимок с вашего Mac.";
@@ -229,18 +269,20 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
 
   return <div className="screenBody">
     <section className={`launchCard ${fresh ? "pendingGlow" : "offline"}`}>
-      <div className="launchIntro"><div className="progressRing"><strong>{percent}%</strong></div><div><span className="eyebrow">ТЕКУЩЕЕ СОСТОЯНИЕ</span><h2>{title}</h2><p>{explanation}</p></div></div>
-      <div className="sourceLine"><span className={runtime?.source_status?.bybit === "CONNECTED" ? "dot ok" : "dot"} />Bybit <b>{runtime?.source_status?.bybit ?? "нет данных"}</b><span className={runtime?.source_status?.binance === "CONNECTED" ? "dot ok" : "dot"} />Binance <b>{runtime?.source_status?.binance ?? "нет данных"}</b></div>
+      <div className="launchIntro"><div className="progressRing" style={{background:`conic-gradient(var(--green) ${percent}%, #30483d ${percent}% 100%)`}}><strong>{percent}%<small>готово</small></strong></div><div><span className="eyebrow">ТЕКУЩЕЕ СОСТОЯНИЕ</span><h2>{title}</h2><p>{explanation}</p></div></div>
+      <div className="sourceLine"><span className={fresh && runtime?.source_status?.bybit === "CONNECTED" ? "dot ok" : "dot"} />Bybit <b>{sourceLabel(runtime?.source_status?.bybit, fresh)}</b><span className={fresh && runtime?.source_status?.binance === "CONNECTED" ? "dot ok" : "dot"} />Binance <b>{sourceLabel(runtime?.source_status?.binance, fresh)}</b><span className="snapshotAge">Снимок: {ageLabel(snapshotTime, now)}</span></div>
       <div className="progressBars"><label><span>Живые свечи</span><b>{n(governor?.minimum_live_bars)} / {n(governor?.required_live_bars)}</b><i><em style={{width:`${barPercent}%`}} /></i></label><label><span>Переходы стратегии</span><b>{n(oos)} / {n(required)}</b><i><em style={{width:`${transitionPercent}%`}} /></i></label></div>
     </section>
 
+    <section className="leaderCard"><span>ЛУЧШАЯ МОДЕЛЬ СЕЙЧАС</span><div className="leaderTitle"><strong>{leader?.model_id ?? "Лидер ещё не определён"}</strong><b>{leader ? `${(leader.median_return * 100).toFixed(2)}% OOS` : "—"}</b></div><code>{leader?.expression ?? "Нужен первый допустимый переход"}</code><div className="leaderMetrics"><small>Просадка <b>{leader ? `${(leader.maximum_drawdown * 100).toFixed(2)}%` : "—"}</b></small><small>Переходы <b>{n(leader?.transitions)} / {required}</b></small><small>Свечи <b>{n(leader?.minimum_live_bars)} / {n(governor?.required_live_bars)}</b></small></div><p>Осталось минимум {n(remainingBars)} свечей и {n(remainingTransitions)} переходов. По времени — не раньше чем через {relativeUntil(earliestReview, now)}; переходы могут увеличить срок.</p></section>
+
     <section className="checkpointCard critical"><div><span>ГЛАВНЫЙ БЛОКЕР</span><strong>Преимущество после расходов ещё не доказано</strong></div><p>Q1: живые данные и независимая Demo-проверка не завершены. SHADOW продолжает генерировать и сравнивать решения; Mainnet закрыт.</p></section>
 
-    <section className="actionCard"><span>ЧТО ДЕЛАТЬ СЕЙЧАС</span><strong>{action}</strong><small>Обновлено: {(runtime?.server_received_at ?? runtime?.updated_at) ? new Date((runtime?.server_received_at ?? runtime?.updated_at) as string).toLocaleTimeString("ru-RU") : "ожидание"}</small></section>
+    <section className="actionCard"><span>ЧТО ДЕЛАТЬ СЕЙЧАС</span><strong>{action}</strong><small>Снимок получен: {ageLabel(snapshotTime, now)}</small></section>
 
-    <section className="checkpointCard"><div><span>КОНТРОЛЬ НЕПРЕРЫВНОСТИ</span><strong className={runtime?.watchdog_status === "HEALTHY" ? "positive" : "negative"}>{runtime?.watchdog_status === "HEALTHY" ? "Сбор контролируется" : runtime?.watchdog_status ?? "Запускается"}</strong></div><p>{runtime?.watchdog_reasons?.join(" · ") || "Watchdog раз в минуту проверяет свежесть снимка и оба источника; при остановке показывает уведомление macOS."}</p></section>
+    <section className="checkpointCard"><div><span>КОНТРОЛЬ НЕПРЕРЫВНОСТИ</span><strong className={runtime?.watchdog_status === "HEALTHY" ? "positive" : "negative"}>{runtime?.watchdog_status === "HEALTHY" ? "Сбор контролируется" : runtime?.watchdog_status === "ALERT" ? "Требует внимания" : runtime?.watchdog_status ?? "Запускается"}</strong></div><p>{watchdogSummary(runtime?.watchdog_reasons)}</p></section>
 
-    <section className="miniGrid userVitals"><article><span>Bybit Demo</span><strong className={demoConnected ? "positive" : "negative"}>{demoConnected ? "Подключён" : "Не подключён"}</strong><small>Только canary и SHADOW</small></article><article><span>Открытые ордера</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_orders ?? 0) : "—"}</strong></article><article><span>Открытые позиции</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_positions ?? 0) : "—"}</strong><small>{runtime?.demo_unmatched_positions ? "Есть внешняя позиция" : "Сверено"}</small></article><article><span>Проверка ордера</span><strong>{runtime?.demo_order_canary_status === "PASSED" ? "Пройдена" : runtime?.demo_order_canary_status === "FAILED" ? "Ошибка" : "Впереди"}</strong></article></section>
+    <section className="miniGrid userVitals"><article><span>Bybit Demo</span><strong className={demoConnected ? "positive" : "negative"}>{demoConnected ? "Подключён" : "Не подключён"}</strong><small>{humanStatus(runtime?.demo_experiment?.status)}</small></article><article><span>Открытые ордера</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_orders ?? 0) : "—"}</strong></article><article><span>Открытые позиции</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_positions ?? 0) : "—"}</strong><small>{runtime?.demo_unmatched_positions ? "Есть внешняя позиция" : "Сверено"}</small></article><article><span>Авто-Demo</span><strong>{humanStatus(runtime?.demo_experiment?.status)}</strong><small>Mainnet закрыт</small></article></section>
 
     <section className="checkpointCard"><div><span>ЗАЩИТА ПОЗИЦИИ</span><strong>{runtime?.demo_protection_status === "PASSED" ? "SL · TP · trailing подтверждены Bybit" : "Ещё не подтверждена"}</strong></div><p>{runtime?.demo_protection_status === "PASSED" ? `Demo-тест ${runtime.demo_protected_symbol ?? ""} завершён reduce-only закрытием.` : "До подтверждения серверной защиты автоматические входы запрещены."}</p></section>
 
