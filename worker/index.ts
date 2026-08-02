@@ -61,7 +61,7 @@ const runtimeFields = new Set([
   "private_state_synced", "demo_order_canary_status", "demo_orders_total",
   "demo_open_orders", "demo_open_positions",
   "demo_unmatched_positions",
-  "demo_protection_status", "demo_protected_symbol", "universe_observed_count",
+  "demo_protection_status", "demo_protected_symbol", "demo_experiment", "universe_observed_count",
   "universe_trade_eligible_count", "universe_symbols",
   "universe_quality_samples", "universe_quality_ready_count",
   "universe_quality_required_samples_per_symbol",
