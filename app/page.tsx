@@ -230,7 +230,8 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
   const technical = runtime?.technical_block_cycles ?? 0;
   const reviewDue = reviewAt ? now >= reviewAt.getTime() : false;
   const connected = runtime?.source_status?.bybit === "CONNECTED" && runtime?.source_status?.binance === "CONNECTED";
-  const demoConnected = Boolean(runtime?.testnet_connected);
+  const demoConnected = Boolean(runtime?.testnet_connected && runtime?.private_state_synced && runtime?.startup_reconciliation_status === "PASSED");
+  const brokerBlocked = runtime?.startup_reconciliation_status !== "PASSED" || !runtime?.private_state_synced;
   const tournament = runtime?.factor_model_tournament;
   const leader = tournament?.leaderboard?.find(item => item.model_id === tournament.leader_model_id) ?? tournament?.leaderboard?.[0];
   const remainingBars = Math.max(0, (governor?.required_live_bars ?? 2016) - (governor?.minimum_live_bars ?? 0));
@@ -246,6 +247,10 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
     title = "Нет свежей связи с системой";
     explanation = "Последний статус устарел. Торговля остаётся недоступна.";
     action = "Убедитесь, что Mac включён; если статус не вернётся за 2 минуты — нужна диагностика сервиса";
+  } else if (brokerBlocked) {
+    title = "Рынок виден, но Bybit Demo недоступен";
+    explanation = "Приватное состояние позиций и ордеров не подтверждено. Новые Demo-сделки заблокированы.";
+    action = "Система сама повторяет сверку каждые 90 секунд; Mainnet закрыт";
   } else if (!connected) {
     title = "Один из источников переподключается";
     explanation = "Система продолжает сохранять доступные данные и не принимает неполные решения.";
@@ -275,6 +280,8 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
       <div className="progressBars"><label><span>Живые свечи</span><b>{n(governor?.minimum_live_bars)} / {n(governor?.required_live_bars)}</b><i><em style={{width:`${barPercent}%`}} /></i></label><label><span>Переходы стратегии</span><b>{n(oos)} / {n(required)}</b><i><em style={{width:`${transitionPercent}%`}} /></i></label></div>
     </section>
 
+    {brokerBlocked && <section className="checkpointCard critical"><div><span>BYBIT DEMO · ПРИВАТНАЯ СВЕРКА</span><strong>{runtime?.demo_experiment?.reason?.includes("403") ? "Ошибка 403 · доступ ограничен маршрутом" : `Состояние: ${runtime?.startup_reconciliation_status ?? "неизвестно"}`}</strong></div><p>Позиции: неизвестно · ордера: неизвестно · новые входы: запрещены. {runtime?.startup_reconciliation_reasons?.join(" · ") || runtime?.demo_experiment?.reason || "Ожидается повторная сверка"}</p><small>Публичные котировки и личный Demo-аккаунт — разные подключения. Зелёный рынок не означает доступ к позициям.</small></section>}
+
     <section className="leaderCard"><span>{leader?.eligible_for_live_rank ? "ЛУЧШАЯ ПРОВЕРЕННАЯ МОДЕЛЬ СЕЙЧАС" : "ТЕКУЩИЙ КАНДИДАТ · РЕЗУЛЬТАТ ЕЩЁ НЕ ДОКАЗАН"}</span><div className="leaderTitle"><strong>{leader?.model_id ?? "Кандидат ещё не определён"}</strong><b>{leader?.eligible_for_live_rank ? `${(leader.median_return * 100).toFixed(2)}% OOS` : "результата ещё нет"}</b></div><code>{leader?.expression ?? "Нужен первый допустимый переход"}</code><div className="leaderMetrics"><small>Просадка <b>{leader?.eligible_for_live_rank ? `${(leader.maximum_drawdown * 100).toFixed(2)}%` : "ещё не измерена"}</b></small><small>Переходы <b>{n(leader?.transitions)} / {required}</b></small><small>Свечи <b>{n(leader?.minimum_live_bars)} / {n(governor?.required_live_bars)}</b></small></div><p>Осталось минимум {n(remainingBars)} свечей и {n(remainingTransitions)} переходов. По времени — не раньше чем через {relativeUntil(earliestReview, now)}; переходы могут увеличить срок.</p></section>
 
     <section className="checkpointCard critical"><div><span>ГЛАВНЫЙ БЛОКЕР</span><strong>Преимущество после расходов ещё не доказано</strong></div><p>Q1: живые данные и независимая Demo-проверка не завершены. SHADOW продолжает генерировать и сравнивать решения; Mainnet закрыт.</p></section>
@@ -283,7 +290,7 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
 
     <section className="checkpointCard"><div><span>КОНТРОЛЬ НЕПРЕРЫВНОСТИ</span><strong className={runtime?.watchdog_status === "HEALTHY" ? "positive" : "negative"}>{runtime?.watchdog_status === "HEALTHY" ? "Сбор контролируется" : runtime?.watchdog_status === "ALERT" ? "Требует внимания" : runtime?.watchdog_status ?? "Запускается"}</strong></div><p>{watchdogSummary(runtime?.watchdog_reasons)}</p></section>
 
-    <section className="miniGrid userVitals"><article><span>Bybit Demo</span><strong className={demoConnected ? "positive" : "negative"}>{demoConnected ? "Подключён" : "Не подключён"}</strong><small>{humanStatus(runtime?.demo_experiment?.status)}</small></article><article><span>Открытые ордера</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_orders ?? 0) : "—"}</strong></article><article><span>Открытые позиции</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_positions ?? 0) : "—"}</strong><small>{runtime?.demo_experiment?.symbol ? `${runtime.demo_experiment.symbol} · ${runtime.demo_experiment.side ?? ""} ${runtime.demo_experiment.quantity ?? ""}` : runtime?.demo_unmatched_positions ? "Есть внешняя позиция" : "Сверено"}</small></article><article><span>Авто-Demo</span><strong>{humanStatus(runtime?.demo_experiment?.status)}</strong><small>{ownerLabel(runtime?.demo_experiment?.owner ?? runtime?.demo_experiment?.positions?.[0]?.owner)}</small></article></section>
+    <section className="miniGrid userVitals"><article><span>Bybit Demo</span><strong className={demoConnected ? "positive" : "negative"}>{demoConnected ? "Подключён и сверён" : "Недоступен"}</strong><small>{demoConnected ? humanStatus(runtime?.demo_experiment?.status) : runtime?.demo_experiment?.reason?.includes("403") ? "Ошибка 403" : "Приватная сверка не пройдена"}</small></article><article><span>Открытые ордера</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_orders ?? 0) : "Неизвестно"}</strong></article><article><span>Открытые позиции</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_positions ?? 0) : "Неизвестно"}</strong><small>{runtime?.private_state_synced ? (runtime?.demo_experiment?.symbol ? `${runtime.demo_experiment.symbol} · ${runtime.demo_experiment.side ?? ""} ${runtime.demo_experiment.quantity ?? ""}` : runtime?.demo_unmatched_positions ? "Есть внешняя позиция" : "Сверено") : "Биржа не подтвердила состояние"}</small></article><article><span>Авто-Demo</span><strong>{runtime?.startup_new_demo_actions_allowed ? humanStatus(runtime?.demo_experiment?.status) : "Заблокировано"}</strong><small>Mainnet закрыт</small></article></section>
 
     <section className="checkpointCard"><div><span>ЗАЩИТА ПОЗИЦИИ</span><strong>{runtime?.demo_protection_status === "PASSED" ? "SL · TP · trailing подтверждены Bybit" : "Ещё не подтверждена"}</strong></div><p>{runtime?.demo_protection_status === "PASSED" ? `Demo-тест ${runtime.demo_protected_symbol ?? ""} завершён reduce-only закрытием.` : "До подтверждения серверной защиты автоматические входы запрещены."}</p></section>
 
