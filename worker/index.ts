@@ -46,6 +46,7 @@ const runtimeFields = new Set([
   "research_external_rejections",
   "research_feedback_protocol", "research_feedback_evaluated",
   "research_feedback_accepted", "research_feedback_rejected", "research_feedback_results",
+  "research_factor_memory", "research_strategy_memory",
   "factor_model_paper", "factor_model_tournament", "model_winner_notification",
   "startup_reconciliation_status", "startup_reconciliation_checked_at",
   "startup_open_orders", "startup_open_positions", "startup_external_orders",
