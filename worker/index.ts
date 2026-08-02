@@ -72,6 +72,7 @@ const runtimeFields = new Set([
   "microstructure_health",
   "microstructure_research",
   "microstructure_samples", "microstructure_first_sample_at", "counterfactual_cycles",
+  "counterfactual_gate_audit", "strategy_robustness",
 ]);
 
 function jsonResponse(value: unknown, status = 200): Response {
