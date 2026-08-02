@@ -5,7 +5,7 @@ import readiness from "../public/readiness.json";
 
 const runtimeUrl = "/api/runtime";
 
-type Tab = "home" | "results" | "connection";
+type Tab = "home" | "results" | "health" | "connection";
 type Leader = {
   model_id: string; expression: string; median_return: number; maximum_drawdown: number;
   transitions: number; minimum_live_bars: number; score: number;
@@ -57,6 +57,7 @@ type Runtime = {
   max_concurrent_demo_orders?: number;
   source_status?: Record<string, string>;
   source_reconnects?: Record<string, number>;
+  source_reconnects_last_hour?: Record<string, number>;
   last_assessment_status?: string;
   last_technical_reasons?: string[];
   warmup_active?: boolean;
@@ -146,15 +147,23 @@ type Runtime = {
     binance_depth_valid?: boolean; binance_depth_gaps?: number; binance_invalid_books?: number;
   }> };
   microstructure_research?: { status?: string; execution_allowed?: boolean; features?: Record<string,string>; promotion_rule?: string };
+  microstructure_samples?: number;
+  microstructure_first_sample_at?: string | null;
+  counterfactual_cycles?: number;
+  storage_health?: { free_bytes?: number; free_percent?: number; project_data_bytes?: number; healthy?: boolean; warning?: boolean; critical?: boolean };
+  archive_status?: { status?: string; hot_days?: number; archived_files?: number; released_local_bytes?: number; updated_at?: string };
 };
 
 const tabs: { id: Tab; icon: string; label: string }[] = [
   { id: "home", icon: "⌂", label: "Главная" },
   { id: "results", icon: "▥", label: "Результаты" },
+  { id: "health", icon: "◉", label: "Здоровье" },
   { id: "connection", icon: "↗", label: "Подключение" },
 ];
 
 const n = (value: number | undefined) => (value ?? 0).toLocaleString("ru-RU");
+const gb = (value: number | undefined) => value == null ? "—" : `${(value / 1_073_741_824).toFixed(1)} ГБ`;
+const humanStatus = (value: string | undefined) => ({COLLECTING_OOS:"Накопление живой проверки",KEEP_SHADOW:"Оставить в наблюдении",READY_FOR_ABLATION:"Готово к сравнительному тесту",COLLECTING_HISTORY:"Накопление истории",ACTIVE:"Работает"}[value ?? ""] ?? value ?? "Нет данных");
 
 function relativeUntil(target: Date, now: number): string {
   const ms = Math.max(0, target.getTime() - now);
@@ -177,7 +186,7 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
   const required = governor?.required_transitions ?? 30;
   const transitionPercent = Math.min(100, oos / required * 100);
   const barPercent = Math.min(100, (governor?.minimum_live_bars ?? 0) / (governor?.required_live_bars ?? 2016) * 100);
-  const percent = Math.round(Math.min(transitionPercent, barPercent));
+  const percent = Math.round((transitionPercent + barPercent) / 2);
   const completed = runtime?.completed_cycles ?? 0;
   const technical = runtime?.technical_block_cycles ?? 0;
   const first = runtime?.first_observation_at ? new Date(runtime.first_observation_at) : null;
@@ -201,7 +210,7 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
     title = "Идёт пятиминутный прогрев";
     explanation = "Источники подключены, формируется первое полное окно данных.";
     action = "Ничего делать не нужно";
-  } else if (runtime?.last_assessment_status === "UNKNOWN") {
+  } else if (runtime?.last_assessment_status === "UNKNOWN" && runtime?.last_technical_reasons?.some(reason => reason.includes("missing:") || reason.includes("stale") || reason.includes("quality"))) {
     title = "Обнаружена техническая блокировка";
     explanation = runtime?.last_technical_reasons?.join(" · ") || "Последний снимок был неполным. Это не считается отсутствием сигнала.";
     action = "Система продолжит восстановление; причина уже сохранена для диагностики";
@@ -219,19 +228,22 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
     <section className={`launchCard ${fresh ? "pendingGlow" : "offline"}`}>
       <div className="launchIntro"><div className="progressRing"><strong>{percent}%</strong></div><div><span className="eyebrow">ТЕКУЩЕЕ СОСТОЯНИЕ</span><h2>{title}</h2><p>{explanation}</p></div></div>
       <div className="sourceLine"><span className={runtime?.source_status?.bybit === "CONNECTED" ? "dot ok" : "dot"} />Bybit <b>{runtime?.source_status?.bybit ?? "нет данных"}</b><span className={runtime?.source_status?.binance === "CONNECTED" ? "dot ok" : "dot"} />Binance <b>{runtime?.source_status?.binance ?? "нет данных"}</b></div>
+      <div className="progressBars"><label><span>Живые свечи</span><b>{n(governor?.minimum_live_bars)} / {n(governor?.required_live_bars)}</b><i><em style={{width:`${barPercent}%`}} /></i></label><label><span>Переходы стратегии</span><b>{n(oos)} / {n(required)}</b><i><em style={{width:`${transitionPercent}%`}} /></i></label></div>
     </section>
+
+    <section className="checkpointCard critical"><div><span>ГЛАВНЫЙ БЛОКЕР</span><strong>Преимущество после расходов ещё не доказано</strong></div><p>Q1: живые данные и независимая Demo-проверка не завершены. SHADOW продолжает генерировать и сравнивать решения; Mainnet закрыт.</p></section>
 
     <section className="actionCard"><span>ЧТО ДЕЛАТЬ СЕЙЧАС</span><strong>{action}</strong><small>Обновлено: {(runtime?.server_received_at ?? runtime?.updated_at) ? new Date((runtime?.server_received_at ?? runtime?.updated_at) as string).toLocaleTimeString("ru-RU") : "ожидание"}</small></section>
 
     <section className="checkpointCard"><div><span>КОНТРОЛЬ НЕПРЕРЫВНОСТИ</span><strong className={runtime?.watchdog_status === "HEALTHY" ? "positive" : "negative"}>{runtime?.watchdog_status === "HEALTHY" ? "Сбор контролируется" : runtime?.watchdog_status ?? "Запускается"}</strong></div><p>{runtime?.watchdog_reasons?.join(" · ") || "Watchdog раз в минуту проверяет свежесть снимка и оба источника; при остановке показывает уведомление macOS."}</p></section>
 
-    <section className="miniGrid userVitals"><article><span>Bybit Demo</span><strong className={demoConnected ? "positive" : "negative"}>{demoConnected ? "Подключён" : "Не подключён"}</strong></article><article><span>Открытые ордера</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_orders ?? 0) : "—"}</strong></article><article><span>Открытые позиции</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_positions ?? 0) : "—"}</strong><small>{runtime?.demo_unmatched_positions ? "Есть внешняя позиция" : "Сверено"}</small></article><article><span>Проверка ордера</span><strong>{runtime?.demo_order_canary_status === "PASSED" ? "Пройдена" : runtime?.demo_order_canary_status === "FAILED" ? "Ошибка" : "Впереди"}</strong></article></section>
+    <section className="miniGrid userVitals"><article><span>Bybit Demo</span><strong className={demoConnected ? "positive" : "negative"}>{demoConnected ? "Подключён" : "Не подключён"}</strong><small>Только canary и SHADOW</small></article><article><span>Открытые ордера</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_orders ?? 0) : "—"}</strong></article><article><span>Открытые позиции</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_positions ?? 0) : "—"}</strong><small>{runtime?.demo_unmatched_positions ? "Есть внешняя позиция" : "Сверено"}</small></article><article><span>Проверка ордера</span><strong>{runtime?.demo_order_canary_status === "PASSED" ? "Пройдена" : runtime?.demo_order_canary_status === "FAILED" ? "Ошибка" : "Впереди"}</strong></article></section>
 
     <section className="checkpointCard"><div><span>ЗАЩИТА ПОЗИЦИИ</span><strong>{runtime?.demo_protection_status === "PASSED" ? "SL · TP · trailing подтверждены Bybit" : "Ещё не подтверждена"}</strong></div><p>{runtime?.demo_protection_status === "PASSED" ? `Demo-тест ${runtime.demo_protected_symbol ?? ""} завершён reduce-only закрытием.` : "До подтверждения серверной защиты автоматические входы запрещены."}</p></section>
 
     <section className="checkpointCard"><div><span>ДИНАМИЧЕСКИЙ UNIVERSE</span><strong>{n(runtime?.universe_quality_ready_count)} из {n(runtime?.observed_symbols?.length)} прошли проверку качества</strong></div><p>{runtime?.observed_symbols?.join(" · ") || runtime?.universe_symbols?.join(" · ") || "Сканирование Bybit и внешнего подтверждения ещё не завершено"}</p><small>Собрано {n(runtime?.universe_quality_samples)} замеров; минимум {n(runtime?.universe_quality_required_samples_per_symbol)} на каждую монету. До этого ордера по ней запрещены.</small></section>
 
-    <section className="dataCard"><div><span>ТЕКУЩИЙ PAPER-ДОПУСК</span><strong>{oos} из {required} переходов · {n(governor?.minimum_live_bars)} из {n(governor?.required_live_bars)} свечей</strong></div><b>{percent}%</b><div className="dataTrack"><i style={{width: `${percent}%`}} /></div><div className="estimate"><span>Статус</span><strong>{governor?.status ?? "Сбор данных"}</strong></div><small>Нужны одновременно 7 полных дней, 30 переходов, положительная медиана после расходов, минимум 4 прибыльных монеты и просадка не выше 10%.</small></section>
+    <section className="dataCard"><div><span>ТЕКУЩИЙ PAPER-ДОПУСК</span><strong>{oos} из {required} переходов · {n(governor?.minimum_live_bars)} из {n(governor?.required_live_bars)} свечей</strong></div><b>{percent}%</b><div className="dataTrack"><i style={{width: `${percent}%`}} /></div><div className="estimate"><span>Статус</span><strong>{humanStatus(governor?.status)}</strong></div><small>Нужны одновременно 7 полных дней, 30 переходов, положительная медиана после расходов, минимум 4 прибыльных монеты и просадка не выше 10%.</small></section>
 
     <section className="checkpointCard"><div><span>РЕАЛИСТИЧНЫЙ МАСШТАБ</span><strong>{runtime?.modeled_capital_usdt ?? "30"} USDT</strong></div><p>Даже если на Demo лежат тысячи, риск считается только от этой суммы: не более {runtime?.risk_budget_usdt ?? "0.075"} USDT на сделку. Если минимальный ордер Bybit не помещается в лимит, решение будет NO_TRADE.</p></section>
 
@@ -262,6 +274,16 @@ function Results({ runtime }: { runtime: Runtime | null }) {
     <section className="statsCard"><h3>Demo-торговля</h3><div className="statsGrid"><div><span>Подключение</span><strong>{runtime?.testnet_connected ? "Есть" : "Нет"}</strong></div><div><span>Всего тестовых ордеров</span><strong>{n(runtime?.demo_orders_total)}</strong></div><div><span>Открытые ордера</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_orders ?? 0) : "Ещё не сверено"}</strong></div><div><span>Открытые позиции</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_positions ?? 0) : "Ещё не сверено"}</strong></div><div><span>Максимум параллельно</span><strong>{runtime?.max_concurrent_demo_orders ?? 4}</strong></div></div><small>Прочерк означает, что приватное состояние Bybit ещё не сверено. Это не подменяется нулём. Фактический допуск — от 0 до 4 по общему риску и корреляции.</small></section>
     <section className="statsCard"><h3>Startup Guard</h3><div className="statsGrid"><div><span>Сверка после перезапуска</span><strong>{runtime?.startup_reconciliation_status ?? "Нет"}</strong></div><div><span>Ордера на бирже</span><strong>{n(runtime?.startup_open_orders ?? 0)}</strong></div><div><span>Позиции на бирже</span><strong>{n(runtime?.startup_open_positions ?? 0)}</strong></div><div><span>Новые Demo-действия</span><strong>{runtime?.startup_new_demo_actions_allowed ? "Разрешены" : "Заблокированы"}</strong></div></div><p>{runtime?.startup_reconciliation_reasons?.join(" · ") || "Биржевое и локальное состояние согласованы."}</p><small>Atlas не отменяет и не закрывает неизвестные ордера или позиции автоматически.</small></section>
     <section className="evidenceCard"><h3>Обязательные проверки</h3>{readiness.criteria.map((item)=><div className="evidenceRow" key={item.criterion_id}><b>{item.criterion_id}</b><span>{item.summary}</span><i className={item.status.toLowerCase()}>{item.status}</i></div>)}</section>
+  </div>;
+}
+
+function Health({ runtime }: { runtime: Runtime | null }) {
+  const health = runtime?.microstructure_health?.symbols ?? {};
+  const research = runtime?.microstructure_research;
+  return <div className="screenBody standalone"><h2 className="pageTitle">Здоровье системы</h2>
+    <section className="statsCard"><h3>Источники и стаканы</h3><div className="statsGrid"><div><span>Внешний контекст</span><strong className={runtime?.external_context_status === "READY" ? "positive" : "warning"}>{runtime?.external_context_status ?? "Нет данных"}</strong></div><div><span>Источники</span><strong>{n(runtime?.external_context_sources_ready)} из {n(runtime?.external_context_sources_total)}</strong></div><div><span>Синхронные стаканы</span><strong>{Object.values(health).filter(item=>item.binance_depth_valid).length} из {Object.keys(health).length}</strong></div></div>{Object.entries(health).map(([symbol,item])=><div className="evidenceRow" key={symbol}><b>{symbol}</b><span>Bybit {item.bybit_book_age_ms ?? "—"} ms · Binance {item.binance_depth_age_ms ?? "—"} ms · gaps {n(item.binance_depth_gaps)}</span><i className={item.binance_depth_valid ? "pass" : "fail"}>{item.binance_depth_valid ? "Синхронен" : "Ошибка"}</i></div>)}</section>
+    <section className="statsCard"><h3>Накопление микроструктуры</h3><div className="statsGrid"><div><span>Состояние</span><strong>{humanStatus(research?.status)}</strong></div><div><span>Снимки</span><strong>{n(runtime?.microstructure_samples)} / {n((research as {minimum_samples?:number}|undefined)?.minimum_samples)}</strong></div><div><span>Прошло дней</span><strong>{Number((research as {elapsed_days?:number}|undefined)?.elapsed_days ?? 0).toFixed(2)} / 3</strong></div><div><span>Проверки при защитном veto</span><strong>{n(runtime?.counterfactual_cycles)}</strong></div></div><small>Эти признаки используются как оценки и контрфактические варианты, а не как дополнительные запреты. После накопления истории они проходят сравнительный тест с базовой моделью.</small></section>
+    <section className="statsCard"><h3>Диск, архив и переподключения</h3><div className="statsGrid"><div><span>Данные проекта</span><strong>{gb(runtime?.storage_health?.project_data_bytes)}</strong></div><div><span>Свободно</span><strong className={runtime?.storage_health?.critical ? "negative" : runtime?.storage_health?.warning ? "warning" : "positive"}>{runtime?.storage_health?.free_percent?.toFixed(1) ?? "—"}%</strong></div><div><span>Google Drive архив</span><strong>{runtime?.archive_status?.status === "READY" ? "Подключён" : "Ожидает"}</strong></div><div><span>Горячее окно</span><strong>{n(runtime?.archive_status?.hot_days ?? 7)} дней</strong></div><div><span>Bybit reconnect / час</span><strong>{n(runtime?.source_reconnects_last_hour?.bybit)}</strong></div><div><span>Binance reconnect / час</span><strong>{n(runtime?.source_reconnects_last_hour?.binance)}</strong></div></div><small>Ниже 10% показывается предупреждение; критический остаток — ниже 5%. После 7 дней данные копируются в недельные каталоги Google Drive, сверяются по SHA-256 и только затем удаляются локально.</small></section>
   </div>;
 }
 
@@ -320,7 +342,7 @@ export default function Page() {
     const timestamp = runtime?.server_received_at ?? runtime?.updated_at;
     return Boolean(timestamp && now - new Date(timestamp).getTime() < 600_000);
   }, [runtime, now]);
-  return <main><div className="phone"><StatusBar fresh={fresh} />{fetchError && <div className="infoBox">Ошибка обновления панели: {fetchError}. Последний корректный снимок сохранён.</div>}{tab === "home" && <Header notificationsEnabled={notificationsEnabled} onEnable={()=>void enableNotifications()} />}{tab === "home" ? <Home runtime={runtime} fresh={fresh} now={now} /> : tab === "results" ? <Results runtime={runtime} /> : <Connection runtime={runtime} />}
+  return <main><div className="phone"><StatusBar fresh={fresh} />{fetchError && <div className="infoBox">Ошибка обновления панели: {fetchError}. Последний корректный снимок сохранён.</div>}{tab === "home" && <Header notificationsEnabled={notificationsEnabled} onEnable={()=>void enableNotifications()} />}{tab === "home" ? <Home runtime={runtime} fresh={fresh} now={now} /> : tab === "results" ? <Results runtime={runtime} /> : tab === "health" ? <Health runtime={runtime} /> : <Connection runtime={runtime} />}
     <nav aria-label="Основная навигация">{tabs.map((item)=><button key={item.id} className={tab===item.id?"active":""} onClick={()=>setTab(item.id)}><i>{item.icon}</i><span>{item.label}</span></button>)}</nav>
   </div></main>;
 }

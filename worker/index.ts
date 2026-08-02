@@ -54,6 +54,8 @@ const runtimeFields = new Set([
   "qualified_oos_observations", "required_oos_observations",
   "modeled_capital_usdt", "risk_per_trade_fraction", "risk_budget_usdt",
   "execution_network_available", "source_status", "source_reconnects", "source_errors",
+  "source_reconnects_last_hour", "storage_health",
+  "archive_status",
   "watchdog_status", "watchdog_checked_at", "watchdog_reasons",
   "testnet_connected", "testnet_fee_verified",
   "private_state_synced", "demo_order_canary_status", "demo_orders_total",
@@ -68,6 +70,7 @@ const runtimeFields = new Set([
   "external_context_sources_ready", "external_context_sources_total",
   "microstructure_health",
   "microstructure_research",
+  "microstructure_samples", "microstructure_first_sample_at", "counterfactual_cycles",
 ]);
 
 function jsonResponse(value: unknown, status = 200): Response {
