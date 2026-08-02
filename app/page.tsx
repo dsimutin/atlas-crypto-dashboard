@@ -47,7 +47,7 @@ type Runtime = {
   demo_open_positions?: number | null;
   demo_unmatched_positions?: number | null;
   demo_protection_status?: "NOT_TESTED" | "PASSED" | "FAILED";
-  demo_experiment?: { status?: string; checked_at?: string; symbol?: string; strategy_id?: string; risk_usdt?: string; mainnet_allowed?: boolean; reason?: string };
+  demo_experiment?: { status?: string; checked_at?: string; symbol?: string; strategy_id?: string; side?: string; quantity?: string; stop_loss?: string; take_profit?: string; open_positions?: number; open_orders?: number; risk_usdt?: string; mainnet_allowed?: boolean; reason?: string };
   demo_protected_symbol?: string | null;
   universe_observed_count?: number;
   universe_trade_eligible_count?: number;
@@ -253,7 +253,7 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
     title = "Идёт пятиминутный прогрев";
     explanation = "Источники подключены, формируется первое полное окно данных.";
     action = "Ничего делать не нужно";
-  } else if (runtime?.last_assessment_status === "UNKNOWN" && runtime?.last_technical_reasons?.some(reason => reason.includes("missing:") || reason.includes("stale") || reason.includes("quality"))) {
+  } else if (runtime?.watchdog_status !== "HEALTHY" && runtime?.last_assessment_status === "UNKNOWN" && runtime?.last_technical_reasons?.some(reason => reason.includes("missing:") || reason.includes("stale") || reason.includes("quality"))) {
     title = "Обнаружена техническая блокировка";
     explanation = runtime?.last_technical_reasons?.join(" · ") || "Последний снимок был неполным. Это не считается отсутствием сигнала.";
     action = "Система продолжит восстановление; причина уже сохранена для диагностики";
@@ -274,7 +274,7 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
       <div className="progressBars"><label><span>Живые свечи</span><b>{n(governor?.minimum_live_bars)} / {n(governor?.required_live_bars)}</b><i><em style={{width:`${barPercent}%`}} /></i></label><label><span>Переходы стратегии</span><b>{n(oos)} / {n(required)}</b><i><em style={{width:`${transitionPercent}%`}} /></i></label></div>
     </section>
 
-    <section className="leaderCard"><span>ЛУЧШАЯ МОДЕЛЬ СЕЙЧАС</span><div className="leaderTitle"><strong>{leader?.model_id ?? "Лидер ещё не определён"}</strong><b>{leader ? `${(leader.median_return * 100).toFixed(2)}% OOS` : "—"}</b></div><code>{leader?.expression ?? "Нужен первый допустимый переход"}</code><div className="leaderMetrics"><small>Просадка <b>{leader ? `${(leader.maximum_drawdown * 100).toFixed(2)}%` : "—"}</b></small><small>Переходы <b>{n(leader?.transitions)} / {required}</b></small><small>Свечи <b>{n(leader?.minimum_live_bars)} / {n(governor?.required_live_bars)}</b></small></div><p>Осталось минимум {n(remainingBars)} свечей и {n(remainingTransitions)} переходов. По времени — не раньше чем через {relativeUntil(earliestReview, now)}; переходы могут увеличить срок.</p></section>
+    <section className="leaderCard"><span>{leader?.eligible_for_live_rank ? "ЛУЧШАЯ ПРОВЕРЕННАЯ МОДЕЛЬ СЕЙЧАС" : "НОВАЯ МОДЕЛЬ · ИДЁТ ПЕРВАЯ ПРОВЕРКА"}</span><div className="leaderTitle"><strong>{leader?.model_id ?? "Лидер ещё не определён"}</strong><b>{leader?.eligible_for_live_rank ? `${(leader.median_return * 100).toFixed(2)}% OOS` : "результата ещё нет"}</b></div><code>{leader?.expression ?? "Нужен первый допустимый переход"}</code><div className="leaderMetrics"><small>Просадка <b>{leader?.eligible_for_live_rank ? `${(leader.maximum_drawdown * 100).toFixed(2)}%` : "ещё не измерена"}</b></small><small>Переходы <b>{n(leader?.transitions)} / {required}</b></small><small>Свечи <b>{n(leader?.minimum_live_bars)} / {n(governor?.required_live_bars)}</b></small></div><p>Осталось минимум {n(remainingBars)} свечей и {n(remainingTransitions)} переходов. По времени — не раньше чем через {relativeUntil(earliestReview, now)}; переходы могут увеличить срок.</p></section>
 
     <section className="checkpointCard critical"><div><span>ГЛАВНЫЙ БЛОКЕР</span><strong>Преимущество после расходов ещё не доказано</strong></div><p>Q1: живые данные и независимая Demo-проверка не завершены. SHADOW продолжает генерировать и сравнивать решения; Mainnet закрыт.</p></section>
 
@@ -282,7 +282,7 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
 
     <section className="checkpointCard"><div><span>КОНТРОЛЬ НЕПРЕРЫВНОСТИ</span><strong className={runtime?.watchdog_status === "HEALTHY" ? "positive" : "negative"}>{runtime?.watchdog_status === "HEALTHY" ? "Сбор контролируется" : runtime?.watchdog_status === "ALERT" ? "Требует внимания" : runtime?.watchdog_status ?? "Запускается"}</strong></div><p>{watchdogSummary(runtime?.watchdog_reasons)}</p></section>
 
-    <section className="miniGrid userVitals"><article><span>Bybit Demo</span><strong className={demoConnected ? "positive" : "negative"}>{demoConnected ? "Подключён" : "Не подключён"}</strong><small>{humanStatus(runtime?.demo_experiment?.status)}</small></article><article><span>Открытые ордера</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_orders ?? 0) : "—"}</strong></article><article><span>Открытые позиции</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_positions ?? 0) : "—"}</strong><small>{runtime?.demo_unmatched_positions ? "Есть внешняя позиция" : "Сверено"}</small></article><article><span>Авто-Demo</span><strong>{humanStatus(runtime?.demo_experiment?.status)}</strong><small>Mainnet закрыт</small></article></section>
+    <section className="miniGrid userVitals"><article><span>Bybit Demo</span><strong className={demoConnected ? "positive" : "negative"}>{demoConnected ? "Подключён" : "Не подключён"}</strong><small>{humanStatus(runtime?.demo_experiment?.status)}</small></article><article><span>Открытые ордера</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_orders ?? 0) : "—"}</strong></article><article><span>Открытые позиции</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_positions ?? 0) : "—"}</strong><small>{runtime?.demo_experiment?.symbol ? `${runtime.demo_experiment.symbol} · ${runtime.demo_experiment.side ?? ""} ${runtime.demo_experiment.quantity ?? ""}` : runtime?.demo_unmatched_positions ? "Есть внешняя позиция" : "Сверено"}</small></article><article><span>Авто-Demo</span><strong>{humanStatus(runtime?.demo_experiment?.status)}</strong><small>{runtime?.demo_experiment?.stop_loss ? `SL ${runtime.demo_experiment.stop_loss}` : "Mainnet закрыт"}</small></article></section>
 
     <section className="checkpointCard"><div><span>ЗАЩИТА ПОЗИЦИИ</span><strong>{runtime?.demo_protection_status === "PASSED" ? "SL · TP · trailing подтверждены Bybit" : "Ещё не подтверждена"}</strong></div><p>{runtime?.demo_protection_status === "PASSED" ? `Demo-тест ${runtime.demo_protected_symbol ?? ""} завершён reduce-only закрытием.` : "До подтверждения серверной защиты автоматические входы запрещены."}</p></section>
 
