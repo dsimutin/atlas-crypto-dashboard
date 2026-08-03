@@ -15,7 +15,7 @@ interface Env {
   };
 }
 
-const DASHBOARD_BUILD_ID = "2026.08.04-2";
+const DASHBOARD_BUILD_ID = "2026.08.04-3";
 
 const runtimeFields = new Set([
   "updated_at", "first_observation_at", "last_full_cycle_at", "last_decision_status",

@@ -145,7 +145,7 @@ type Runtime = {
   startup_new_demo_actions_allowed?: boolean;
   startup_reconciliation_reasons?: string[];
   factor_model_paper?: { paper_governor?: { status?: string; required_transitions?: number; required_live_bars?: number; total_transitions?: number; minimum_live_bars?: number; model_evidence_started_at?: string | null; median_return?: number; maximum_drawdown?: number; profitable_symbols?: number; blockers?: string[]; demo_orders_allowed?: boolean } };
-  factor_model_tournament?: { status?: string; active_models?: number; registry_models?: number; archived_models?: number; unsupported_model_ids?: string[]; leader_model_id?: string; leaderboard?: Leader[]; historical_leaderboard?: Array<Leader & { retired_reason?: string }>; future_registry_models_auto_enrolled?: boolean };
+  factor_model_tournament?: { status?: string; active_models?: number; registry_models?: number; archived_models?: number; archived_models_with_transitions?: number; archived_total_transitions?: number; archived_total_minimum_live_bars?: number; archived_max_transitions?: number; archived_max_minimum_live_bars?: number; unsupported_model_ids?: string[]; leader_model_id?: string; leaderboard?: Leader[]; historical_leaderboard?: Array<Leader & { retired_reason?: string }>; future_registry_models_auto_enrolled?: boolean };
   model_winner_notification?: WinnerNotification;
   watchdog_status?: string;
   watchdog_checked_at?: string;
@@ -304,6 +304,12 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
         <article><span>2 · День засчитывается?</span><strong className={runtime?.data_acceptance?.official_observation_ready ? "positive" : "warning"}>{acceptedDays} из {requiredDays}</strong><small>{acceptedDays === 0 ? "Пока нет полного чистого дня" : "Засчитаны только полные чистые дни"}</small></article>
         <article><span>3 · Стратегия доказана?</span><strong className={strategyProven ? "positive" : "warning"}>{strategyProven ? "Да" : "Нет"}</strong><small>{tournament?.active_models ? `${oos} из ${required} переходов активного кандидата` : historicalBest ? `Активных 0 · архивный максимум ${historicalBest.transitions} переходов` : "Активных кандидатов нет"}</small></article>
         <article><span>4 · Торговля разрешена?</span><strong className="negative">Нет</strong><small>SHADOW · Mainnet закрыт</small></article>
+      </div>
+      <div className="answerGrid">
+        <article><span>Исторические свечи</span><strong>{n(runtime?.history_rows_total)}</strong><small>{n(runtime?.history_days)} дней · {n(runtime?.history_symbols?.length)} рынков</small></article>
+        <article><span>PAPER model-bars в архиве</span><strong>{n(tournament?.archived_total_minimum_live_bars)}</strong><small>Сумма минимального OOS по {n(tournament?.archived_models)} снятым моделям</small></article>
+        <article><span>Сохранённые переходы</span><strong>{n(tournament?.archived_total_transitions)}</strong><small>У {n(tournament?.archived_models_with_transitions)} моделей · максимум {n(tournament?.archived_max_transitions)}</small></article>
+        <article><span>Новые переходы сейчас</span><strong className="warning">{n(oos)}</strong><small>{tournament?.active_models ? "Активный PAPER-зачёт идёт" : "Активных моделей нет — новый зачёт не идёт"}</small></article>
       </div>
       <div className="plainBlocker"><span>ЧТО МЕШАЕТ СЕЙЧАС</span><strong>{acceptedDays < requiredDays ? `Нужно накопить ${requiredDays} чистых дней наблюдения` : !strategyProven ? "Нужно доказать преимущество стратегии после расходов" : "Ожидается отдельное разрешение на следующий режим"}</strong></div>
     </section>
