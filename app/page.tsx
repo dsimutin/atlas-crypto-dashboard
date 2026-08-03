@@ -59,6 +59,8 @@ type Runtime = {
   source_status?: Record<string, string>;
   source_reconnects?: Record<string, number>;
   source_reconnects_last_hour?: Record<string, number>;
+  binance_queue_depth?: number;
+  binance_queue_drops?: number;
   last_assessment_status?: string;
   last_technical_reasons?: string[];
   warmup_active?: boolean;
@@ -158,7 +160,7 @@ type Runtime = {
   counterfactual_gate_audit?: { pending?: number; evaluated?: number; saved_losses?: number; missed_winners?: number; net_counterfactual_bps?: string; by_reason?: Record<string,{evaluated?:number;saved_losses?:number;missed_winners?:number}> };
   strategy_robustness?: { deflated_sharpe_probability?: number; probability_backtest_overfitting?: number; cpcv_paths?: number; median_oos_sharpe?: number };
   full_system_audit?: { status?: string; checked_at?: string; read_only?: boolean; automatic_mutations_performed?: number; checks?: Array<{name:string;status:string;summary:string;details?:Record<string,unknown>}> };
-  data_acceptance?: { status?: string; checked_at?: string; contract_version?: string; reasons?: string[]; accepted_days?: string[]; accepted_day_count?: number; required_accepted_days?: number; official_observation_ready?: boolean; journal?: { rows?: number; microstructure_samples?: number; first_sample_at?: string | null } };
+  data_acceptance?: { status?: string; checked_at?: string; contract_version?: string; reasons?: string[]; accepted_days?: string[]; accepted_day_count?: number; required_accepted_days?: number; official_observation_ready?: boolean; journal?: { rows?: number; microstructure_samples?: number; first_sample_at?: string | null }; raw?: { bybit?: { book_replay?: { passed?: boolean; anchored_symbols?: string[]; replay?: { updates?: number; snapshots?: number; invalid_symbols?: string[]; errors?: unknown[] }; journal_bbo_comparison?: { status?: string; compared?: number; mismatches?: unknown[]; passed?: boolean } } } } };
   storage_health?: { free_bytes?: number; free_percent?: number; project_data_bytes?: number; healthy?: boolean; warning?: boolean; critical?: boolean };
   archive_status?: { status?: string; hot_days?: number; archived_files?: number; released_local_bytes?: number; updated_at?: string; remote_access_verified?: boolean };
 };
@@ -212,8 +214,8 @@ function watchdogSummary(reasons: string[] | undefined): string {
   return parts.join(". ") || `${reasons.length} технических причин сохранены в диагностике`;
 }
 
-function StatusBar({ fresh }: { fresh: boolean }) {
-  return <div className="statusbar"><strong>{fresh ? "● Система на связи" : "○ Нет свежих данных"}</strong><span>SHADOW · READ ONLY</span></div>;
+function StatusBar({ fresh, loading }: { fresh: boolean; loading: boolean }) {
+  return <div className="statusbar"><strong>{loading ? "◌ Загружаем актуальный статус" : fresh ? "● Система на связи" : "○ Нет свежих данных"}</strong><span>SHADOW · READ ONLY</span></div>;
 }
 
 function Header({ notificationsEnabled, onEnable }: { notificationsEnabled: boolean; onEnable: () => void }) {
@@ -242,14 +244,20 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
   const leader = tournament?.leaderboard?.find(item => item.model_id === tournament.leader_model_id) ?? tournament?.leaderboard?.[0];
   const remainingBars = Math.max(0, (governor?.required_live_bars ?? 2016) - (governor?.minimum_live_bars ?? 0));
   const remainingTransitions = Math.max(0, required - oos);
-  const barsReadyAt = new Date(now + remainingBars * 5 * 60_000);
-  const earliestReview = reviewAt && reviewAt > barsReadyAt ? reviewAt : barsReadyAt;
   const snapshotTime = runtime?.server_received_at ?? runtime?.updated_at;
+  const acceptedDays = runtime?.data_acceptance?.accepted_day_count ?? 0;
+  const requiredDays = runtime?.data_acceptance?.required_accepted_days ?? 7;
+  const systemHealthy = Boolean(fresh && connected && runtime?.full_system_audit?.status === "PASS");
+  const strategyProven = Boolean(governor?.demo_orders_allowed && governor?.status === "PASS");
 
   let title = "Получаем состояние системы";
   let explanation = "Дашборд ждёт первый защищённый снимок с вашего Mac.";
   let action = "Ничего делать не нужно — обновление выполняется автоматически";
-  if (!fresh) {
+  if (!runtime) {
+    title = "Загружаем актуальное состояние";
+    explanation = "Панель запрашивает последний защищённый снимок системы.";
+    action = "Обычно это занимает несколько секунд";
+  } else if (!fresh) {
     title = "Нет свежей связи с системой";
     explanation = "Последний статус устарел. Торговля остаётся недоступна.";
     action = "Убедитесь, что Mac включён; если статус не вернётся за 2 минуты — нужна диагностика сервиса";
@@ -280,6 +288,20 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
   }
 
   return <div className="screenBody">
+    <section className="clarityCard">
+      <span className="eyebrow">КОРОТКО И БЕЗ ТЕХНИЧЕСКИХ ТЕРМИНОВ</span>
+      <h2>{!runtime ? "Получаем данные…" : systemHealthy ? "Система работает, доказательства ещё копятся" : "Система требует внимания"}</h2>
+      <p>{!runtime ? "Последний снимок загружается." : systemHealthy ? "Сбор данных исправен. Торговая стратегия пока не доказана, поэтому реальные сделки закрыты." : explanation}</p>
+      <div className="answerGrid">
+        <article><span>1 · Система работает?</span><strong className={systemHealthy ? "positive" : "negative"}>{systemHealthy ? "Да" : "Нет / проверяется"}</strong><small>{runtime?.full_system_audit?.status === "PASS" ? "Все системные проверки пройдены" : "Смотрите раздел «Здоровье»"}</small></article>
+        <article><span>2 · День засчитывается?</span><strong className={runtime?.data_acceptance?.official_observation_ready ? "positive" : "warning"}>{acceptedDays} из {requiredDays}</strong><small>{acceptedDays === 0 ? "Пока нет полного чистого дня" : "Засчитаны только полные чистые дни"}</small></article>
+        <article><span>3 · Стратегия доказана?</span><strong className={strategyProven ? "positive" : "warning"}>{strategyProven ? "Да" : "Нет"}</strong><small>{oos} из {required} переходов · {n(governor?.minimum_live_bars)} свечей</small></article>
+        <article><span>4 · Торговля разрешена?</span><strong className="negative">Нет</strong><small>SHADOW · Mainnet закрыт</small></article>
+      </div>
+      <div className="plainBlocker"><span>ЧТО МЕШАЕТ СЕЙЧАС</span><strong>{acceptedDays < requiredDays ? `Нужно накопить ${requiredDays} чистых дней наблюдения` : !strategyProven ? "Нужно доказать преимущество стратегии после расходов" : "Ожидается отдельное разрешение на следующий режим"}</strong></div>
+    </section>
+
+    <details className="homeDetails"><summary>Показать подробный отчёт</summary><div className="homeDetailsBody">
     <section className={`launchCard ${fresh ? "pendingGlow" : "offline"}`}>
       <div className="launchIntro"><div className="progressRing" style={{background:`conic-gradient(var(--green) ${percent}%, #30483d ${percent}% 100%)`}}><strong>{percent}%<small>готово</small></strong></div><div><span className="eyebrow">ТЕКУЩЕЕ СОСТОЯНИЕ</span><h2>{title}</h2><p>{explanation}</p></div></div>
       <div className="sourceLine"><span className={fresh && runtime?.source_status?.bybit === "CONNECTED" ? "dot ok" : "dot"} />Bybit <b>{sourceLabel(runtime?.source_status?.bybit, fresh)}</b><span className={fresh && runtime?.source_status?.binance === "CONNECTED" ? "dot ok" : "dot"} />Binance <b>{sourceLabel(runtime?.source_status?.binance, fresh)}</b><span className="snapshotAge">Снимок: {ageLabel(snapshotTime, now)}</span></div>
@@ -311,6 +333,7 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
     <section className="miniGrid"><article><span>Полностью проверено</span><strong>{n(completed)}</strong></article><article><span>Рынок без сигнала</span><strong>{n(runtime?.no_signal_cycles)}</strong></article><article><span>Защитные запреты</span><strong>{n(runtime?.protective_veto_cycles)}</strong></article><article><span>Неполные снимки за всё время</span><strong>{n(technical)}</strong><small>Счётчик истории, не текущая авария</small></article></section>
 
     <section className="automationCard"><span>ЧТО СИСТЕМА РЕШАЕТ САМА</span><p>Переподключение и состав сбора данных · остановка при плохих данных · сопровождение виртуальных сигналов · постановка гипотезы на пересмотр.</p><small>Порог стратегии не меняется скрытно: новая идея создаётся отдельной версией и проверяется заново.</small></section>
+    </div></details>
   </div>;
 }
 
@@ -341,8 +364,10 @@ function Results({ runtime }: { runtime: Runtime | null }) {
 function Health({ runtime }: { runtime: Runtime | null }) {
   const health = runtime?.microstructure_health?.symbols ?? {};
   const research = runtime?.microstructure_research;
+  const replay = runtime?.data_acceptance?.raw?.bybit?.book_replay;
   return <div className="screenBody standalone"><h2 className="pageTitle">Здоровье системы</h2>
     <section className="statsCard"><h3>Приёмка торговых данных</h3><div className="statsGrid"><div><span>Контракт</span><strong>{runtime?.data_acceptance?.contract_version ?? "Ещё не проверен"}</strong></div><div><span>Результат</span><strong className={runtime?.data_acceptance?.status === "PASS" ? "positive" : "negative"}>{runtime?.data_acceptance?.status ?? "Нет отчёта"}</strong></div><div><span>Засчитанные полные дни</span><strong>{n(runtime?.data_acceptance?.accepted_day_count)} / {n(runtime?.data_acceptance?.required_accepted_days ?? 7)}</strong></div><div><span>Восстановлено снимков</span><strong>{n(runtime?.data_acceptance?.journal?.microstructure_samples)}</strong></div></div><p>{runtime?.data_acceptance?.reasons?.join(" · ") || "Схемы совместимы, raw-сообщения воспроизводятся текущими парсерами, микроструктурные доказательства восстановлены из неизменяемого журнала."}</p><small>Текущий незакрытый день не засчитывается. Полный день требует не менее 20 часов покрытия, 100 пригодных снимков, четыре рынка и raw от Bybit и Binance.</small></section>
+    <section className="statsCard"><h3>Raw → стакан → journal</h3><div className="statsGrid"><div><span>Replay</span><strong className={replay?.passed ? "positive" : "negative"}>{replay?.passed ? "PASS" : "Нет подтверждения"}</strong></div><div><span>Обновления стакана</span><strong>{n(replay?.replay?.updates)}</strong></div><div><span>Exchange snapshots</span><strong>{n(replay?.replay?.snapshots)}</strong></div><div><span>Causal BBO</span><strong className={replay?.journal_bbo_comparison?.passed ? "positive" : "warning"}>{n(replay?.journal_bbo_comparison?.compared)} сверок</strong></div><div><span>Расхождения BBO</span><strong className={(replay?.journal_bbo_comparison?.mismatches?.length ?? 0) === 0 ? "positive" : "negative"}>{n(replay?.journal_bbo_comparison?.mismatches?.length)}</strong></div><div><span>Невалидные стаканы</span><strong className={(replay?.replay?.invalid_symbols?.length ?? 0) === 0 ? "positive" : "negative"}>{n(replay?.replay?.invalid_symbols?.length)}</strong></div><div><span>Binance queue</span><strong>{n(runtime?.binance_queue_depth)}</strong></div><div><span>Новые потери очереди</span><strong className={(runtime?.binance_queue_drops ?? 0) === 0 ? "positive" : "negative"}>{n(runtime?.binance_queue_drops)}</strong></div></div><small>Сравнение причинное: journal сверяется только с raw-событиями, полученными не позже времени снимка.</small></section>
     <section className="statsCard"><h3>Полная сквозная ревизия</h3><div className="statsGrid"><div><span>Итог</span><strong className={runtime?.full_system_audit?.status === "PASS" ? "positive" : runtime?.full_system_audit?.status === "WARN" ? "warning" : "negative"}>{runtime?.full_system_audit?.status ?? "Ещё не запускалась"}</strong></div><div><span>Проверено</span><strong>{runtime?.full_system_audit?.checked_at?.replace("T", " ").slice(0, 19) ?? "—"}</strong></div><div><span>Изменений на бирже</span><strong>{n(runtime?.full_system_audit?.automatic_mutations_performed)}</strong></div><div><span>Режим</span><strong>{runtime?.full_system_audit?.read_only ? "READ ONLY" : "—"}</strong></div></div>{runtime?.full_system_audit?.checks?.map(item=><div className="evidenceRow" key={item.name}><b>{item.name}</b><span>{item.summary}</span><i className={item.status === "PASS" ? "pass" : item.status === "WARN" ? "pending" : "fail"}>{item.status}</i></div>)}<small>Запускается автоматически раз в час и после установки. Проверяет код, процессы, данные, Bybit, защиту позиции, risk ledger, архив и Cloudflare.</small></section>
     <section className="statsCard"><h3>Источники и стаканы</h3><div className="statsGrid"><div><span>Внешний контекст</span><strong className={runtime?.external_context_status === "READY" ? "positive" : "warning"}>{runtime?.external_context_status ?? "Нет данных"}</strong></div><div><span>Источники</span><strong>{n(runtime?.external_context_sources_ready)} из {n(runtime?.external_context_sources_total)}</strong></div><div><span>Синхронные стаканы</span><strong>{Object.values(health).filter(item=>item.binance_depth_valid).length} из {Object.keys(health).length}</strong></div></div>{Object.entries(health).map(([symbol,item])=><div className="evidenceRow" key={symbol}><b>{symbol}</b><span>Bybit {item.bybit_book_age_ms ?? "—"} ms · Binance {item.binance_depth_age_ms ?? "—"} ms · gaps {n(item.binance_depth_gaps)}</span><i className={item.binance_depth_valid ? "pass" : "fail"}>{item.binance_depth_valid ? "Синхронен" : "Ошибка"}</i></div>)}</section>
     <section className="statsCard"><h3>Накопление микроструктуры</h3><div className="statsGrid"><div><span>Состояние</span><strong>{humanStatus(research?.status)}</strong></div><div><span>Снимки</span><strong>{n(runtime?.microstructure_samples)} / {n((research as {minimum_samples?:number}|undefined)?.minimum_samples)}</strong></div><div><span>Прошло дней</span><strong>{Number((research as {elapsed_days?:number}|undefined)?.elapsed_days ?? 0).toFixed(2)} / 3</strong></div><div><span>Проверки при защитном veto</span><strong>{n(runtime?.counterfactual_cycles)}</strong></div></div><small>Эти признаки используются как оценки и контрфактические варианты, а не как дополнительные запреты. После накопления истории они проходят сравнительный тест с базовой моделью.</small></section>
@@ -405,7 +430,7 @@ export default function Page() {
     const timestamp = runtime?.server_received_at ?? runtime?.updated_at;
     return Boolean(timestamp && now - new Date(timestamp).getTime() < 600_000);
   }, [runtime, now]);
-  return <main><div className="phone"><StatusBar fresh={fresh} />{fetchError && <div className="infoBox">Ошибка обновления панели: {fetchError}. Последний корректный снимок сохранён.</div>}{tab === "home" && <Header notificationsEnabled={notificationsEnabled} onEnable={()=>void enableNotifications()} />}{tab === "home" ? <Home runtime={runtime} fresh={fresh} now={now} /> : tab === "results" ? <Results runtime={runtime} /> : tab === "health" ? <Health runtime={runtime} /> : <Connection runtime={runtime} />}
+  return <main><div className="phone"><StatusBar fresh={fresh} loading={runtime === null && fetchError === null} />{fetchError && <div className="infoBox">Ошибка обновления панели: {fetchError}. Последний корректный снимок сохранён.</div>}{tab === "home" && <Header notificationsEnabled={notificationsEnabled} onEnable={()=>void enableNotifications()} />}{tab === "home" ? <Home runtime={runtime} fresh={fresh} now={now} /> : tab === "results" ? <Results runtime={runtime} /> : tab === "health" ? <Health runtime={runtime} /> : <Connection runtime={runtime} />}
     <nav aria-label="Основная навигация">{tabs.map((item)=><button key={item.id} className={tab===item.id?"active":""} onClick={()=>setTab(item.id)}><i>{item.icon}</i><span>{item.label}</span></button>)}</nav>
   </div></main>;
 }

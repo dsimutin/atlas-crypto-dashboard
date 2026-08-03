@@ -56,6 +56,7 @@ const runtimeFields = new Set([
   "modeled_capital_usdt", "risk_per_trade_fraction", "risk_budget_usdt",
   "execution_network_available", "source_status", "source_reconnects", "source_errors",
   "source_reconnects_last_hour", "storage_health",
+  "binance_queue_depth", "binance_queue_drops",
   "archive_status",
   "watchdog_status", "watchdog_checked_at", "watchdog_reasons",
   "testnet_connected", "testnet_fee_verified",
