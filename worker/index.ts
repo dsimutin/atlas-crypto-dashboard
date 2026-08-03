@@ -15,7 +15,7 @@ interface Env {
   };
 }
 
-const DASHBOARD_BUILD_ID = "2026.08.04-1";
+const DASHBOARD_BUILD_ID = "2026.08.04-2";
 
 const runtimeFields = new Set([
   "updated_at", "first_observation_at", "last_full_cycle_at", "last_decision_status",
@@ -42,7 +42,7 @@ const runtimeFields = new Set([
   "research_lab_market_diagnostics",
   "research_lab_viable_candidates",
   "research_external_audit_status", "research_generated_hypotheses",
-  "research_accepted_hypotheses", "research_data_schema_audit",
+  "research_accepted_hypotheses", "research_candidate_funnel", "research_data_schema_audit",
   "research_compatibility_protocol", "research_compatibility_updated_at",
   "research_compatibility_backends", "research_external_proposals",
   "research_external_rejections",
