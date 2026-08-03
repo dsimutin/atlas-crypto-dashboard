@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import readiness from "../public/readiness.json";
 
 const runtimeUrl = "/api/runtime";
@@ -15,6 +15,7 @@ type WinnerNotification = Leader & { event_id: string; occurred_at: string; prev
 type Runtime = {
   updated_at?: string;
   server_received_at?: string;
+  dashboard_build_id?: string;
   first_observation_at?: string;
   last_full_cycle_at?: string | null;
   last_decision_status?: string | null;
@@ -214,8 +215,8 @@ function watchdogSummary(reasons: string[] | undefined): string {
   return parts.join(". ") || `${reasons.length} технических причин сохранены в диагностике`;
 }
 
-function StatusBar({ fresh, loading }: { fresh: boolean; loading: boolean }) {
-  return <div className="statusbar"><strong>{loading ? "◌ Загружаем актуальный статус" : fresh ? "● Система на связи" : "○ Нет свежих данных"}</strong><span>SHADOW · READ ONLY</span></div>;
+function StatusBar({ fresh, loading, buildId }: { fresh: boolean; loading: boolean; buildId?: string }) {
+  return <div className="statusbar"><strong>{loading ? "◌ Загружаем актуальный статус" : fresh ? "● Система на связи" : "○ Нет свежих данных"}</strong><span title={buildId ? `Версия панели ${buildId}` : undefined}>SHADOW · READ ONLY{buildId ? ` · ${buildId}` : ""}</span></div>;
 }
 
 function Header({ notificationsEnabled, onEnable }: { notificationsEnabled: boolean; onEnable: () => void }) {
@@ -344,7 +345,7 @@ function Results({ runtime }: { runtime: Runtime | null }) {
   const historical = tournament?.historical_leaderboard ?? [];
   return <div className="screenBody standalone"><h2 className="pageTitle">Что уже произошло</h2>
     <section className="statsCard"><h3>Микроструктура и внешние источники</h3><div className="statsGrid"><div><span>Внешний контекст</span><strong className={runtime?.external_context_status === "READY" ? "positive" : "warning"}>{runtime?.external_context_status ?? "Нет данных"}</strong></div><div><span>Источники</span><strong>{n(runtime?.external_context_sources_ready)} из {n(runtime?.external_context_sources_total)}</strong></div><div><span>Символы depth</span><strong>{n(Object.keys(runtime?.microstructure_health?.symbols ?? {}).length)}</strong></div></div>{Object.entries(runtime?.microstructure_health?.symbols ?? {}).map(([symbol,item])=><div className="evidenceRow" key={symbol}><b>{symbol}</b><span>Bybit depth {item.bybit_book_age_ms ?? "—"} ms · Binance depth {item.binance_depth_age_ms ?? "—"} ms · gaps {n(item.binance_depth_gaps)}</span><i className={item.binance_depth_valid ? "pass" : "fail"}>{item.binance_depth_valid ? "Синхронен" : "Невалиден"}</i></div>)}<small>Deribit BTC/ETH, CoinGecko и GeckoTerminal обновляются отдельно и не имеют доступа к исполнению. Depth-контроль отслеживает свежесть, разрывы последовательности и некорректные стаканы.</small></section>
-    <section className="statsCard"><h3>PAPER-турнир моделей</h3><div className="statsGrid"><div><span>Статус</span><strong>{tournament?.status ?? "Нет данных"}</strong></div><div><span>Активно</span><strong>{n(tournament?.active_models)} из {n(tournament?.registry_models)}</strong></div><div><span>Текущий лидер</span><strong>{leader?.model_id ?? "Ещё нет"}</strong></div><div><span>Переходы / свечи</span><strong>{n(leader?.transitions)} / {n(leader?.minimum_live_bars)}</strong></div><div><span>Медиана после расходов</span><strong className={(leader?.median_return ?? 0) > 0 ? "positive" : "negative"}>{leader ? `${(leader.median_return * 100).toFixed(2)}%` : "—"}</strong></div><div><span>Макс. просадка</span><strong>{leader ? `${(leader.maximum_drawdown * 100).toFixed(2)}%` : "—"}</strong></div></div><p>{leader?.expression ?? "Лидер появится после первого допустимого перехода позиции."}</p>{tournament?.leaderboard?.slice(0,10).map((item,index)=><div className="evidenceRow" key={item.model_id}><b>{index + 1}. {item.model_id}</b><span>{item.expression} · OOS {item.minimum_live_bars} свечей · {item.transitions} переходов</span><i className={item.model_id === tournament.leader_model_id ? "pass" : "pending"}>{item.status}</i></div>)}<small>Каждый model ID сохраняет собственную OOS-историю при перезапусках и смене лидера. Архивных поколений: {n((tournament as { archived_model_ids?: string[] } | undefined)?.archived_model_ids?.length)}. Несовместимых с live-движком моделей: {n(tournament?.unsupported_model_ids?.length)}.</small></section>
+    <section className="statsCard"><h3>PAPER-турнир моделей</h3><div className="statsGrid"><div><span>Статус</span><strong>{tournament?.status ?? "Нет данных"}</strong></div><div><span>Активно сейчас</span><strong>{n(tournament?.active_models)} из {n(tournament?.registry_models)}</strong></div><div><span>Текущий лидер</span><strong>{leader?.model_id ?? "Нет прошедшей модели"}</strong></div><div><span>Новый зачёт</span><strong>{leader ? `${n(leader.transitions)} переходов` : "Не начат"}</strong></div><div><span>Медиана после расходов</span><strong className={(leader?.median_return ?? 0) > 0 ? "positive" : "negative"}>{leader ? `${(leader.median_return * 100).toFixed(2)}%` : "—"}</strong></div><div><span>Макс. просадка</span><strong>{leader ? `${(leader.maximum_drawdown * 100).toFixed(2)}%` : "—"}</strong></div></div><p>{leader?.expression ?? "Все модели текущего поколения отклонены исследовательскими проверками. Их прежние результаты не потеряны и показаны ниже в архиве."}</p>{tournament?.leaderboard?.slice(0,10).map((item,index)=><div className="evidenceRow" key={item.model_id}><b>{index + 1}. {item.model_id}</b><span>{item.expression} · OOS {item.minimum_live_bars} свечей · {item.transitions} переходов</span><i className={item.model_id === tournament.leader_model_id ? "pass" : "pending"}>{item.status}</i></div>)}<small>Каждый model ID сохраняет собственную OOS-историю при перезапусках и смене лидера. Сохранено снятых моделей: {n(tournament?.archived_models)}. Несовместимых с live-движком моделей: {n(tournament?.unsupported_model_ids?.length)}.</small></section>
     {historical.length > 0 && <section className="statsCard"><h3>Сохранённые результаты снятых кандидатов</h3><p>Это не новый ноль: прежние переходы сохранены, но модели больше не проходят текущие проверки устойчивости и не считаются активными.</p>{historical.slice(0,10).map((item,index)=><div className="evidenceRow" key={item.model_id}><b>{index + 1}. {item.model_id}</b><span>{item.expression} · {item.transitions} переходов · {item.minimum_live_bars} свечей · просадка {(item.maximum_drawdown * 100).toFixed(2)}%</span><i className="fail">Снят</i></div>)}<small>Всего сохранено моделей: {n(tournament?.archived_models)}. Архивная статистика не переносится в зачёт новой гипотезы, но и не удаляется.</small></section>}
     <section className="statsCard"><h3>Живой поток</h3><div className="statsGrid"><div><span>Bybit</span><strong>{n(runtime?.bybit_messages)}</strong></div><div><span>Binance</span><strong>{n(runtime?.binance_messages)}</strong></div><div><span>Циклы агентов</span><strong>{n(runtime?.assessment_cycles)}</strong></div><div><span>Стратегия проверена</span><strong>{n(runtime?.strategy_cycles)}</strong></div><div><span>Виртуальные сигналы</span><strong>{n(runtime?.virtual_actions)}</strong></div><div><span>Ожидают результата</span><strong>{n(runtime?.pending_virtual_observations)}</strong></div></div></section>
     <section className="decisionCard"><span>ПОСЛЕДНЕЕ РЕШЕНИЕ</span><strong>{runtime?.last_decision_status ?? "Ещё не было полного решения"}</strong><p>{runtime?.last_decision_reasons?.join(" · ") || "После прогрева здесь появится человеческое объяснение."}</p></section>
@@ -394,13 +395,20 @@ export default function Page() {
     () => typeof Notification !== "undefined" && Notification.permission === "granted",
   );
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const loadedBuildId = useRef<string | null>(null);
   useEffect(() => {
     let active = true;
     const refresh = async () => {
       try {
         const response = await fetch(`${runtimeUrl}?t=${Date.now()}`, { cache: "no-store" });
         if (response.ok && active) {
-          setRuntime(await response.json() as Runtime);
+          const nextRuntime = await response.json() as Runtime;
+          if (loadedBuildId.current && nextRuntime.dashboard_build_id && loadedBuildId.current !== nextRuntime.dashboard_build_id) {
+            window.location.reload();
+            return;
+          }
+          loadedBuildId.current = nextRuntime.dashboard_build_id ?? loadedBuildId.current;
+          setRuntime(nextRuntime);
           setFetchError(null);
         } else if (active) {
           setFetchError(`HTTP ${response.status}`);
@@ -433,7 +441,7 @@ export default function Page() {
     const timestamp = runtime?.server_received_at ?? runtime?.updated_at;
     return Boolean(timestamp && now - new Date(timestamp).getTime() < 600_000);
   }, [runtime, now]);
-  return <main><div className="phone"><StatusBar fresh={fresh} loading={runtime === null && fetchError === null} />{fetchError && <div className="infoBox">Ошибка обновления панели: {fetchError}. Последний корректный снимок сохранён.</div>}{tab === "home" && <Header notificationsEnabled={notificationsEnabled} onEnable={()=>void enableNotifications()} />}{tab === "home" ? <Home runtime={runtime} fresh={fresh} now={now} /> : tab === "results" ? <Results runtime={runtime} /> : tab === "health" ? <Health runtime={runtime} /> : <Connection runtime={runtime} />}
+  return <main><div className="phone"><StatusBar fresh={fresh} loading={runtime === null && fetchError === null} buildId={runtime?.dashboard_build_id} />{fetchError && <div className="infoBox">Ошибка обновления панели: {fetchError}. Последний корректный снимок сохранён.</div>}{tab === "home" && <Header notificationsEnabled={notificationsEnabled} onEnable={()=>void enableNotifications()} />}{tab === "home" ? <Home runtime={runtime} fresh={fresh} now={now} /> : tab === "results" ? <Results runtime={runtime} /> : tab === "health" ? <Health runtime={runtime} /> : <Connection runtime={runtime} />}
     <nav aria-label="Основная навигация">{tabs.map((item)=><button key={item.id} className={tab===item.id?"active":""} onClick={()=>setTab(item.id)}><i>{item.icon}</i><span>{item.label}</span></button>)}</nav>
   </div></main>;
 }

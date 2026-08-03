@@ -15,6 +15,8 @@ interface Env {
   };
 }
 
+const DASHBOARD_BUILD_ID = "2026.08.04-1";
+
 const runtimeFields = new Set([
   "updated_at", "first_observation_at", "last_full_cycle_at", "last_decision_status",
   "last_decision_reasons", "mode", "bybit_messages", "binance_messages",
@@ -91,7 +93,7 @@ async function runtimeApi(request: Request, env: Env): Promise<Response> {
     ).first<{ payload: string; receivedAt: string }>();
     if (!row) return jsonResponse({ status: "NO_DATA" }, 503);
     const payload = JSON.parse(row.payload) as Record<string, unknown>;
-    return jsonResponse({ ...payload, server_received_at: row.receivedAt });
+    return jsonResponse({ ...payload, server_received_at: row.receivedAt, dashboard_build_id: DASHBOARD_BUILD_ID });
   }
   if (request.method !== "POST") return jsonResponse({ error: "method not allowed" }, 405);
   const authorization = request.headers.get("Authorization");
