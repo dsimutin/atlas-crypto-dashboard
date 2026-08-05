@@ -20,6 +20,7 @@ type Runtime = {
   research_hypothesis_lifecycle?: { tracked?: number; stage_counts?: Record<string, number> };
   research_compatibility_backends?: Record<string, { project?: string; available_in_controller_environment?: boolean }>;
   research_generator_performance?: Record<string, { supported?: number; selected_for_expensive_validation?: number; accepted?: number; cooldown?: boolean }>;
+  research_family_incubators?: Record<string, { finalists?: number; best_validation_return?: number; best_validation_trades?: number; best_exit_mode?: string; cost_sensitivity?: { returns?: Record<string, number>; stress_2x_positive?: boolean }; specialist_route?: { status?: string; symbol?: string; validation?: { return?: number; max_drawdown?: number; trades?: number } }; viable?: boolean }>;
   factor_model_paper?: {
     model_id?: string; expression?: string; validation_cost_aware_return?: number;
     execution_profile?: { rebalance_bars?: number; entry_abs_quantile?: number };
@@ -110,6 +111,7 @@ export default function Page() {
   const lifecycle = runtime?.research_hypothesis_lifecycle?.stage_counts ?? {};
   const backends = useMemo(() => Object.entries(runtime?.research_compatibility_backends ?? {}).filter(([, value]) => value.available_in_controller_environment), [runtime]);
   const rejectionLabels: Record<string, string> = { NEGATIVE_EXACT_TRAIN_EXECUTION_REPLAY: "убыточны при точном исполнении", EXACT_TRAIN_REPLAY_FEWER_THAN_2_POSITIVE_SYMBOLS: "слишком узкий результат", FEWER_THAN_4_POSITIVE_VALIDATION_SYMBOLS: "не подтвердились на нужном числе рынков", NON_POSITIVE_COST_AWARE_RETURN: "не пережили расходы", FEWER_THAN_18_COST_AWARE_TRADES: "недостаточно сделок", PARAMETER_PLATEAU_FAILED: "нестабильны к соседним параметрам", SELECTION_BIAS_AUDIT_FAILED: "не прошли защиту от переобучения" };
+  const squeeze = runtime?.research_family_incubators?.vol_squeeze_breakout;
 
   return <main><div className="shell">
     <header><div><span className="brand">ATLAS</span><h1>Состояние торговой системы</h1></div><div className={`live ${systemOk ? "ok" : "bad"}`}><i />{error ? "Панель не получает данные" : systemOk ? "Система работает" : "Нужна проверка"}</div></header>
@@ -133,6 +135,8 @@ export default function Page() {
     </section>}
 
     {noCandidate && <section className="card leader"><div className="sectionTitle"><div><span>ПЕРЕЗАПУСК КАЧЕСТВА</span><h2>Слабые модели убраны, история сохранена</h2></div><b className="rank">{quarantined} в карантине</b></div><p>Новая модель попадёт в SHADOW только если её точная торговая логика остаётся положительной после расходов, она обходит простые контрольные стратегии и выдерживает независимую проверку. Это временно уменьшает количество кандидатов, но повышает смысл каждого из них.</p></section>}
+
+    {squeeze && <section className="card leader"><div className="sectionTitle"><div><span>ПЕРСПЕКТИВНЫЙ ИНКУБАТОР</span><h2>Пробой после сжатия волатильности</h2></div><b className="rank">ещё не кандидат</b></div><p>Лучший вариант использует выход {squeeze.best_exit_mode ?? "—"}. Validation: {pct(squeeze.best_validation_return)}, {count(squeeze.best_validation_trades)} сделок. При двойных расходах: {pct(squeeze.cost_sensitivity?.returns?.["2x"])}. {squeeze.specialist_route?.status === "PASSED" ? `Заранее выбранный рынок ${coin(squeeze.specialist_route.symbol ?? "")} подтвердил плюс, но статистических доказательств пока недостаточно.` : "Маршрут отдельного рынка пока не подтверждён."}</p></section>}
 
     <section className="card tournament">
       <div className="sectionTitle"><div><span>ТУРНИР</span><h2>Все кандидаты продолжают проверку параллельно</h2></div></div>
