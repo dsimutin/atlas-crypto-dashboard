@@ -6,7 +6,7 @@ interface WorkerEnv extends Env {
   RUNTIME_SYNC_TOKEN: string;
 }
 
-const DASHBOARD_BUILD_ID = "2026.08.05-8";
+const DASHBOARD_BUILD_ID = "2026.08.05-9";
 const MAX_RUNTIME_PAYLOAD_BYTES = 65_536;
 
 const runtimeFields = new Set([
@@ -40,6 +40,9 @@ const runtimeFields = new Set([
   "freqtrade_replay_status", "freqtrade_replay_generated_at",
   "freqtrade_replay_all_symbols_loaded", "freqtrade_replay_summary",
   "freqtrade_replay_candidate_trial",
+  "nautilus_replay_status", "nautilus_replay_generated_at",
+  "nautilus_replay_source_events", "nautilus_replay_instruments",
+  "nautilus_replay_engine_summary",
   "research_compatibility_protocol", "research_compatibility_updated_at",
   "research_compatibility_backends", "research_external_proposals",
   "research_external_rejections",
