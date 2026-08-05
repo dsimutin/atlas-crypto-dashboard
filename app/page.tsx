@@ -112,6 +112,14 @@ type Runtime = {
     selection_bias_audit?: number; accepted?: number;
   };
   research_data_schema_audit?: string;
+  ccxt_market_audit_status?: string;
+  ccxt_market_audit_generated_at?: string;
+  ccxt_market_audit_symbols?: Array<{ symbol: string; status: string; aligned_closed_bars?: number; return_correlation?: number; return_gap_p95_bps?: number; missing_aligned_intervals?: number; latest_closed_bar?: string; reason?: string }>;
+  freqtrade_replay_status?: string;
+  freqtrade_replay_generated_at?: string;
+  freqtrade_replay_all_symbols_loaded?: boolean;
+  freqtrade_replay_candidate_trial?: number;
+  freqtrade_replay_summary?: { trades?: number; average_profit_percent?: number; total_profit_usdt?: number; total_profit_percent?: number };
   research_compatibility_protocol?: string;
   research_compatibility_updated_at?: string;
   research_compatibility_backends?: Record<string, { project?: string; available_in_controller_environment?: boolean; integration?: string; source_checkout_available?: boolean }>;
@@ -167,7 +175,7 @@ type Runtime = {
   counterfactual_gate_audit?: { pending?: number; evaluated?: number; saved_losses?: number; missed_winners?: number; net_counterfactual_bps?: string; by_reason?: Record<string,{evaluated?:number;saved_losses?:number;missed_winners?:number}> };
   strategy_robustness?: { deflated_sharpe_probability?: number; probability_backtest_overfitting?: number; cpcv_paths?: number; median_oos_sharpe?: number };
   full_system_audit?: { status?: string; checked_at?: string; read_only?: boolean; automatic_mutations_performed?: number; checks?: Array<{name:string;status:string;summary:string;details?:Record<string,unknown>}> };
-  data_acceptance?: { status?: string; checked_at?: string; contract_version?: string; reasons?: string[]; accepted_days?: string[]; accepted_day_count?: number; required_accepted_days?: number; official_observation_ready?: boolean; journal?: { rows?: number; microstructure_samples?: number; first_sample_at?: string | null }; raw?: { bybit?: { book_replay?: { passed?: boolean; anchored_symbols?: string[]; replay?: { updates?: number; snapshots?: number; invalid_symbols?: string[]; errors?: unknown[] }; journal_bbo_comparison?: { status?: string; compared?: number; mismatches?: unknown[]; passed?: boolean } } } } };
+  data_acceptance?: { status?: string; checked_at?: string; contract_version?: string; reasons?: string[]; accepted_days?: string[]; excluded_queue_drop_days?: Record<string, number>; accepted_day_count?: number; required_accepted_days?: number; official_observation_ready?: boolean; journal?: { rows?: number; microstructure_samples?: number; first_sample_at?: string | null; dates?: Record<string, { coverage_hours?: number; samples?: number; symbols?: number }> }; raw?: { bybit?: { book_replay?: { passed?: boolean; anchored_symbols?: string[]; replay?: { updates?: number; snapshots?: number; invalid_symbols?: string[]; errors?: unknown[] }; journal_bbo_comparison?: { status?: string; compared?: number; mismatches?: unknown[]; passed?: boolean } } } } };
   storage_health?: { free_bytes?: number; free_percent?: number; project_data_bytes?: number; healthy?: boolean; warning?: boolean; critical?: boolean };
   archive_status?: { status?: string; hot_days?: number; archived_files?: number; released_local_bytes?: number; updated_at?: string; remote_access_verified?: boolean };
 };
@@ -183,6 +191,36 @@ const n = (value: number | undefined) => (value ?? 0).toLocaleString("ru-RU");
 const gb = (value: number | undefined) => value == null ? "—" : `${(value / 1_073_741_824).toFixed(1)} ГБ`;
 const humanStatus = (value: string | undefined) => ({COLLECTING_OOS:"Накопление живой проверки",KEEP_SHADOW:"Оставить в наблюдении",READY_FOR_ABLATION:"Готово к сравнительному тесту",COLLECTING_HISTORY:"Накопление истории",ACTIVE:"Работает",WAITING_FOR_IDEA:"Ожидает идею",MANAGING_POSITION:"Ведёт Demo-позицию",MANAGING_PORTFOLIO:"Ведёт Demo-портфель",EXPERIMENT_OPENED:"Demo-сделка открыта",BROKER_GUARD_BLOCKED:"Ожидает свежую брокерную сверку",COOLDOWN:"Пауза между тестами",DAILY_SAMPLE_COMPLETE:"Дневная серия завершена",CORRELATED_POSITION_EXISTS:"Сигнал коррелирует с открытым",PORTFOLIO_RISK_LIMIT:"Достигнут общий риск"}[value ?? ""] ?? value ?? "Нет данных");
 const ownerLabel = (value: string | undefined) => ({challenger:"Challenger-стратегия",factor_model:"Факторная модель",rd_agent:"RD-Agent",canary:"Технический canary",unknown:"Восстановленная позиция"}[value ?? ""] ?? value ?? "Источник ещё не указан");
+
+type ReadinessStatus = "PASS" | "PENDING" | "FAIL";
+
+function liveReadinessCriteria(runtime: Runtime | null) {
+  const acceptedDays = runtime?.data_acceptance?.accepted_day_count ?? 0;
+  const requiredDays = runtime?.data_acceptance?.required_accepted_days ?? 7;
+  const transitions = runtime?.factor_model_paper?.paper_governor?.total_transitions ?? 0;
+  const requiredTransitions = runtime?.factor_model_paper?.paper_governor?.required_transitions ?? 30;
+  const brokerReconciled = Boolean(runtime?.private_state_synced && runtime?.startup_reconciliation_status === "PASSED");
+  const protectionVerified = Boolean(runtime?.testnet_connected && runtime?.demo_order_canary_status === "PASSED" && runtime?.demo_protection_status === "PASSED" && (runtime?.demo_orders_total ?? 0) > 0);
+  return readiness.criteria.map(item => {
+    const base = { ...item, status: item.status as ReadinessStatus };
+    if (!runtime) return base;
+    if (item.criterion_id === "O1") return brokerReconciled
+      ? { ...base, status: "PASS" as const, summary: "Bybit Demo: ордера и позиции сверены с биржей" }
+      : { ...base, status: "PENDING" as const, summary: "Ожидается свежая приватная сверка Bybit Demo" };
+    if (item.criterion_id === "C0") return runtime.testnet_fee_verified
+      ? { ...base, status: "PENDING" as const, summary: "Комиссия Bybit измерена; slippage-калибровка на живых исходах продолжается" }
+      : { ...base, status: "PENDING" as const, summary: "Ожидаются комиссия и калибровка расходов" };
+    if (item.criterion_id === "P1") return protectionVerified
+      ? { ...base, status: "PASS" as const, summary: "Authenticated Demo: SL, TP, trailing и reduce-only подтверждены Bybit" }
+      : { ...base, status: "PENDING" as const, summary: "Ожидается authenticated Demo-проверка серверной защиты" };
+    if (item.criterion_id === "Q1") return {
+      ...base,
+      status: "FAIL" as const,
+      summary: `Fail-closed: чистые дни ${acceptedDays}/${requiredDays}, переходы активной модели ${transitions}/${requiredTransitions}`,
+    };
+    return base;
+  });
+}
 
 function relativeUntil(target: Date, now: number): string {
   const ms = Math.max(0, target.getTime() - now);
@@ -254,6 +292,15 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
   const snapshotTime = runtime?.server_received_at ?? runtime?.updated_at;
   const acceptedDays = runtime?.data_acceptance?.accepted_day_count ?? 0;
   const requiredDays = runtime?.data_acceptance?.required_accepted_days ?? 7;
+  const observedDayEntries = Object.entries(runtime?.data_acceptance?.journal?.dates ?? {});
+  const excludedDropDates = Object.keys(runtime?.data_acceptance?.excluded_queue_drop_days ?? {});
+  const dayEvidenceText = acceptedDays > 0
+    ? "Засчитаны только полные чистые дни"
+    : excludedDropDates.length > 0
+      ? `${observedDayEntries.length} календарных дня наблюдения; прошлый полный день исключён из-за потерь очереди`
+      : observedDayEntries.length > 0
+        ? `${observedDayEntries.length} календарных дня наблюдения; полного 20-часового дня ещё нет`
+        : "Пока нет полного чистого дня";
   const systemHealthy = Boolean(fresh && connected && runtime?.full_system_audit?.status === "PASS");
   const strategyProven = Boolean(governor?.demo_orders_allowed && governor?.status === "PASS");
   const historicalBest = tournament?.historical_leaderboard?.[0];
@@ -302,7 +349,7 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
       <p>{!runtime ? "Последний снимок загружается." : systemHealthy ? "Сбор данных исправен. Торговая стратегия пока не доказана, поэтому реальные сделки закрыты." : explanation}</p>
       <div className="answerGrid">
         <article><span>1 · Система работает?</span><strong className={systemHealthy ? "positive" : "negative"}>{systemHealthy ? "Да" : "Нет / проверяется"}</strong><small>{runtime?.full_system_audit?.status === "PASS" ? "Все системные проверки пройдены" : "Смотрите раздел «Здоровье»"}</small></article>
-        <article><span>2 · День засчитывается?</span><strong className={runtime?.data_acceptance?.official_observation_ready ? "positive" : "warning"}>{acceptedDays} из {requiredDays}</strong><small>{acceptedDays === 0 ? "Пока нет полного чистого дня" : "Засчитаны только полные чистые дни"}</small></article>
+        <article><span>2 · День засчитывается?</span><strong className={runtime?.data_acceptance?.official_observation_ready ? "positive" : "warning"}>{acceptedDays} из {requiredDays}</strong><small>{dayEvidenceText}</small></article>
         <article><span>3 · Стратегия доказана?</span><strong className={strategyProven ? "positive" : "warning"}>{strategyProven ? "Да" : "Нет"}</strong><small>{tournament?.active_models ? `${oos} из ${required} переходов активного кандидата` : historicalBest ? `Активных 0 · архивный максимум ${historicalBest.transitions} переходов` : "Активных кандидатов нет"}</small></article>
         <article><span>4 · Торговля разрешена?</span><strong className="negative">Нет</strong><small>SHADOW · Mainnet закрыт</small></article>
       </div>
@@ -353,9 +400,12 @@ function Home({ runtime, fresh, now }: { runtime: Runtime | null; fresh: boolean
 
 function Results({ runtime }: { runtime: Runtime | null }) {
   const tournament = runtime?.factor_model_tournament;
+  const currentReadiness = liveReadinessCriteria(runtime);
   const leader = tournament?.leaderboard?.find(item => item.model_id === tournament.leader_model_id);
   const historical = tournament?.historical_leaderboard ?? [];
   return <div className="screenBody standalone"><h2 className="pageTitle">Что уже произошло</h2>
+    <section className="statsCard"><h3>Независимая сверка свечей CCXT</h3><div className="statsGrid"><div><span>Итог</span><strong className={runtime?.ccxt_market_audit_status === "PASSED" ? "positive" : "negative"}>{runtime?.ccxt_market_audit_status ?? "Нет проверки"}</strong></div><div><span>Проверено</span><strong>{runtime?.ccxt_market_audit_generated_at?.replace("T", " ").slice(0, 19) ?? "—"}</strong></div><div><span>Рынки</span><strong>{n(runtime?.ccxt_market_audit_symbols?.length)}</strong></div></div>{runtime?.ccxt_market_audit_symbols?.map(item=><div className="evidenceRow" key={item.symbol}><b>{item.symbol}</b><span>{n(item.aligned_closed_bars)} свечей · corr {item.return_correlation?.toFixed(3) ?? "—"} · p95 {item.return_gap_p95_bps?.toFixed(2) ?? "—"} bps · gaps {n(item.missing_aligned_intervals)}</span><i className={item.status === "PASSED" ? "pass" : "fail"}>{item.status}</i></div>)}<small>Read-only сверка Bybit и Binance через CCXT. Она обнаруживает расхождение временной сетки и доходностей, но не изменяет основную ленту и не имеет доступа к ордерам.</small></section>
+    <section className="statsCard"><h3>Независимый replay Freqtrade</h3><div className="statsGrid"><div><span>Итог</span><strong className={runtime?.freqtrade_replay_status === "PASSED" ? "positive" : "negative"}>{runtime?.freqtrade_replay_status ?? "Нет проверки"}</strong></div><div><span>Все рынки загружены</span><strong>{runtime?.freqtrade_replay_all_symbols_loaded ? "Да" : "Нет"}</strong></div><div><span>Trial</span><strong>{runtime?.freqtrade_replay_candidate_trial ?? "—"}</strong></div><div><span>Сделки</span><strong>{n(runtime?.freqtrade_replay_summary?.trades)}</strong></div><div><span>Результат</span><strong>{runtime?.freqtrade_replay_summary?.total_profit_percent?.toFixed(2) ?? "—"}%</strong></div></div><small>Отдельный Freqtrade CLI пересчитывает validation-интервал без ключей и права исполнения. Результат служит parity-доказательством и сам по себе не допускает модель к торговле.</small></section>
     <section className="statsCard"><h3>Микроструктура и внешние источники</h3><div className="statsGrid"><div><span>Внешний контекст</span><strong className={runtime?.external_context_status === "READY" ? "positive" : "warning"}>{runtime?.external_context_status ?? "Нет данных"}</strong></div><div><span>Источники</span><strong>{n(runtime?.external_context_sources_ready)} из {n(runtime?.external_context_sources_total)}</strong></div><div><span>Символы depth</span><strong>{n(Object.keys(runtime?.microstructure_health?.symbols ?? {}).length)}</strong></div></div>{Object.entries(runtime?.microstructure_health?.symbols ?? {}).map(([symbol,item])=><div className="evidenceRow" key={symbol}><b>{symbol}</b><span>Bybit depth {item.bybit_book_age_ms ?? "—"} ms · Binance depth {item.binance_depth_age_ms ?? "—"} ms · gaps {n(item.binance_depth_gaps)}</span><i className={item.binance_depth_valid ? "pass" : "fail"}>{item.binance_depth_valid ? "Синхронен" : "Невалиден"}</i></div>)}<small>Deribit BTC/ETH, CoinGecko и GeckoTerminal обновляются отдельно и не имеют доступа к исполнению. Depth-контроль отслеживает свежесть, разрывы последовательности и некорректные стаканы.</small></section>
     <section className="statsCard"><h3>PAPER-турнир моделей</h3><div className="statsGrid"><div><span>Статус</span><strong>{tournament?.status ?? "Нет данных"}</strong></div><div><span>Активно сейчас</span><strong>{n(tournament?.active_models)} из {n(tournament?.registry_models)}</strong></div><div><span>Текущий лидер</span><strong>{leader?.model_id ?? "Нет прошедшей модели"}</strong></div><div><span>Новый зачёт</span><strong>{leader ? `${n(leader.transitions)} переходов` : "Не начат"}</strong></div><div><span>Медиана после расходов</span><strong className={(leader?.median_return ?? 0) > 0 ? "positive" : "negative"}>{leader ? `${(leader.median_return * 100).toFixed(2)}%` : "—"}</strong></div><div><span>Макс. просадка</span><strong>{leader ? `${(leader.maximum_drawdown * 100).toFixed(2)}%` : "—"}</strong></div></div><p>{leader?.expression ?? "Все модели текущего поколения отклонены исследовательскими проверками. Их прежние результаты не потеряны и показаны ниже в архиве."}</p>{tournament?.leaderboard?.slice(0,10).map((item,index)=><div className="evidenceRow" key={item.model_id}><b>{index + 1}. {item.model_id}</b><span>{item.expression} · OOS {item.minimum_live_bars} свечей · {item.transitions} переходов</span><i className={item.model_id === tournament.leader_model_id ? "pass" : "pending"}>{item.status}</i></div>)}<small>Каждый model ID сохраняет собственную OOS-историю при перезапусках и смене лидера. Сохранено снятых моделей: {n(tournament?.archived_models)}. Несовместимых с live-движком моделей: {n(tournament?.unsupported_model_ids?.length)}.</small></section>
     {historical.length > 0 && <section className="statsCard"><h3>Сохранённые результаты снятых кандидатов</h3><p>Это не новый ноль: прежние переходы сохранены, но модели больше не проходят текущие проверки устойчивости и не считаются активными.</p>{historical.slice(0,10).map((item,index)=><div className="evidenceRow" key={item.model_id}><b>{index + 1}. {item.model_id}</b><span>{item.expression} · {item.transitions} переходов · {item.minimum_live_bars} свечей · просадка {(item.maximum_drawdown * 100).toFixed(2)}%</span><i className="fail">Снят</i></div>)}<small>Всего сохранено моделей: {n(tournament?.archived_models)}. Архивная статистика не переносится в зачёт новой гипотезы, но и не удаляется.</small></section>}
@@ -373,7 +423,7 @@ function Results({ runtime }: { runtime: Runtime | null }) {
     <section className="statsCard"><h3>Ускоритель стратегий</h3><div className="statsGrid"><div><span>Состояние</span><strong>{runtime?.research_lab_status === "READY" ? "Завершён" : "Ещё не запускался"}</strong></div><div><span>Запущено вариантов</span><strong>{n(runtime?.research_lab_tested_configs)}</strong></div><div><span>Прошли все критерии</span><strong>{n(runtime?.research_lab_viable_candidates)}</strong></div><div><span>Досрочно отсечено</span><strong>{n(runtime?.research_lab_early_stopped_configs)}</strong></div><div><span>Полностью проверено</span><strong>{n(runtime?.research_lab_completed_configs)}</strong></div><div><span>Расходы в тесте</span><strong>{n(runtime?.research_lab_cost_bps)} bps</strong></div></div>{runtime?.research_lab_top_candidates?.slice(0, 3).map((item, index)=><div className="evidenceRow" key={`${item.parameters.family}-${index}`}><b>{item.parameters.family} · {(item.parameters.horizon ?? 1) * 5} мин</b><span>{item.parameters.direction_mode ?? "LONG_SHORT"} · validation {(item.validation.median_return * 100).toFixed(2)}% · сделок {item.validation.trades}</span><i className={item.validation_score > 0 ? "pass" : "fail"}>{item.validation_score > 0 ? "Кандидат" : "Отклонить"}</i></div>)}<small>Purged walk-forward и cross-sectional портфель включены. Проверка будущих данных: {runtime?.research_lab_lookahead_audit === "PREFIX_INVARIANCE_PASSED" ? "пройдена" : "нет данных"}. Holdout не вскрыт, доступ к торговле закрыт.</small></section>
     <section className="statsCard"><h3>Demo-торговля</h3><div className="statsGrid"><div><span>Подключение</span><strong>{runtime?.testnet_connected ? "Есть" : "Нет"}</strong></div><div><span>Эксперимент идей</span><strong>{humanStatus(runtime?.demo_experiment?.status)}</strong></div><div><span>Владелец сделки</span><strong>{ownerLabel(runtime?.demo_experiment?.owner ?? runtime?.demo_experiment?.positions?.[0]?.owner)}</strong></div><div><span>Открытые позиции</span><strong>{runtime?.private_state_synced ? n(runtime?.demo_open_positions ?? 0) : "Ещё не сверено"}</strong></div></div><small>До четырёх независимых экспозиций допускаются общим портфельным бюджетом; коррелированные сделки одного направления объединяются. Размер каждой — 25–100% базового риска. SL, TP, trailing и 30-минутный time-stop обязательны; Mainnet недоступен.</small></section>
     <section className="statsCard"><h3>Startup Guard</h3><div className="statsGrid"><div><span>Сверка после перезапуска</span><strong>{runtime?.startup_reconciliation_status ?? "Нет"}</strong></div><div><span>Ордера на бирже</span><strong>{n(runtime?.startup_open_orders ?? 0)}</strong></div><div><span>Позиции на бирже</span><strong>{n(runtime?.startup_open_positions ?? 0)}</strong></div><div><span>Новые Demo-действия</span><strong>{runtime?.startup_new_demo_actions_allowed ? "Разрешены" : "Заблокированы"}</strong></div></div><p>{runtime?.startup_reconciliation_reasons?.join(" · ") || "Биржевое и локальное состояние согласованы."}</p><small>Atlas не отменяет и не закрывает неизвестные ордера или позиции автоматически.</small></section>
-    <section className="evidenceCard"><h3>Обязательные проверки</h3>{readiness.criteria.map((item)=><div className="evidenceRow" key={item.criterion_id}><b>{item.criterion_id}</b><span>{item.summary}</span><i className={item.status.toLowerCase()}>{item.status}</i></div>)}</section>
+    <section className="evidenceCard"><h3>Обязательные проверки · живое состояние</h3>{currentReadiness.map((item)=><div className="evidenceRow" key={item.criterion_id}><b>{item.criterion_id}</b><span>{item.summary}</span><i className={item.status.toLowerCase()}>{item.status}</i></div>)}</section>
   </div>;
 }
 

@@ -2,20 +2,12 @@
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 
-interface Env {
-  ASSETS: Fetcher;
-  DB: D1Database;
+interface WorkerEnv extends Env {
   RUNTIME_SYNC_TOKEN: string;
-  IMAGES: {
-    input(stream: ReadableStream): {
-      transform(options: Record<string, unknown>): {
-        output(options: { format: string; quality: number }): Promise<{ response(): Response }>;
-      };
-    };
-  };
 }
 
-const DASHBOARD_BUILD_ID = "2026.08.04-4";
+const DASHBOARD_BUILD_ID = "2026.08.05-8";
+const MAX_RUNTIME_PAYLOAD_BYTES = 65_536;
 
 const runtimeFields = new Set([
   "updated_at", "first_observation_at", "last_full_cycle_at", "last_decision_status",
@@ -44,6 +36,10 @@ const runtimeFields = new Set([
   "research_external_audit_status", "research_generated_hypotheses",
   "research_accepted_hypotheses", "research_shadow_paper_eligible",
   "research_candidate_funnel", "research_data_schema_audit",
+  "ccxt_market_audit_status", "ccxt_market_audit_generated_at", "ccxt_market_audit_symbols",
+  "freqtrade_replay_status", "freqtrade_replay_generated_at",
+  "freqtrade_replay_all_symbols_loaded", "freqtrade_replay_summary",
+  "freqtrade_replay_candidate_trial",
   "research_compatibility_protocol", "research_compatibility_updated_at",
   "research_compatibility_backends", "research_external_proposals",
   "research_external_rejections",
@@ -87,7 +83,71 @@ function jsonResponse(value: unknown, status = 200): Response {
   });
 }
 
-async function runtimeApi(request: Request, env: Env): Promise<Response> {
+type ImageOutputFormat =
+  | "image/jpeg"
+  | "image/avif"
+  | "image/webp"
+  | "image/png"
+  | "image/gif"
+  | "rgb"
+  | "rgba";
+
+function safeImageFormat(format: string): ImageOutputFormat {
+  switch (format) {
+    case "image/jpeg":
+    case "image/avif":
+    case "image/webp":
+    case "image/png":
+    case "image/gif":
+    case "rgb":
+    case "rgba":
+      return format;
+    default:
+      return "image/webp";
+  }
+}
+
+async function verifyBearerToken(authorization: string | null, expected: string): Promise<boolean> {
+  if (!authorization || !expected) return false;
+  const encoder = new TextEncoder();
+  const [providedHash, expectedHash] = await Promise.all([
+    crypto.subtle.digest("SHA-256", encoder.encode(authorization)),
+    crypto.subtle.digest("SHA-256", encoder.encode(`Bearer ${expected}`)),
+  ]);
+  const provided = new Uint8Array(providedHash);
+  const wanted = new Uint8Array(expectedHash);
+  let difference = 0;
+  for (let index = 0; index < wanted.length; index += 1) {
+    difference |= provided[index] ^ wanted[index];
+  }
+  return difference === 0;
+}
+
+async function readBoundedJson(request: Request): Promise<unknown> {
+  if (!request.body) throw new SyntaxError("missing body");
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_RUNTIME_PAYLOAD_BYTES) {
+      await reader.cancel();
+      throw new RangeError("payload too large");
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+async function runtimeApi(request: Request, env: WorkerEnv): Promise<Response> {
   if (request.method === "GET") {
     const row = await env.DB.prepare(
       "SELECT payload, received_at AS receivedAt FROM runtime_status WHERE id = 1",
@@ -98,15 +158,18 @@ async function runtimeApi(request: Request, env: Env): Promise<Response> {
   }
   if (request.method !== "POST") return jsonResponse({ error: "method not allowed" }, 405);
   const authorization = request.headers.get("Authorization");
-  if (!env.RUNTIME_SYNC_TOKEN || authorization !== `Bearer ${env.RUNTIME_SYNC_TOKEN}`) {
+  if (!(await verifyBearerToken(authorization, env.RUNTIME_SYNC_TOKEN))) {
     return jsonResponse({ error: "unauthorized" }, 401);
   }
   const contentLength = Number(request.headers.get("Content-Length") || "0");
-  if (contentLength > 65_536) return jsonResponse({ error: "payload too large" }, 413);
+  if (contentLength > MAX_RUNTIME_PAYLOAD_BYTES) {
+    return jsonResponse({ error: "payload too large" }, 413);
+  }
   let input: unknown;
   try {
-    input = await request.json();
-  } catch {
+    input = await readBoundedJson(request);
+  } catch (error) {
+    if (error instanceof RangeError) return jsonResponse({ error: "payload too large" }, 413);
     return jsonResponse({ error: "invalid JSON" }, 400);
   }
   if (!input || typeof input !== "object" || Array.isArray(input)) {
@@ -127,11 +190,6 @@ async function runtimeApi(request: Request, env: Env): Promise<Response> {
   return jsonResponse({ status: "OK", received_at: receivedAt });
 }
 
-interface ExecutionContext {
-  waitUntil(promise: Promise<unknown>): void;
-  passThroughOnException(): void;
-}
-
 // Image security config. SVG sources with .svg extension auto-skip the
 // optimization endpoint on the client side (served directly, no proxy).
 // To route SVGs through the optimizer (with security headers), set
@@ -139,7 +197,7 @@ interface ExecutionContext {
 // const imageConfig: ImageConfig = { dangerouslyAllowSVG: true };
 
 const worker = {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
     if (url.pathname === "/api/runtime") {
@@ -151,7 +209,10 @@ const worker = {
       return handleImageOptimization(request, {
         fetchAsset: (path) => env.ASSETS.fetch(new Request(new URL(path, request.url))),
         transformImage: async (body, { width, format, quality }) => {
-          const result = await env.IMAGES.input(body).transform(width > 0 ? { width } : {}).output({ format, quality });
+          const result = await env.IMAGES.input(body).transform(width > 0 ? { width } : {}).output({
+            format: safeImageFormat(format),
+            quality,
+          });
           return result.response();
         },
       }, allowedWidths);
