@@ -3,187 +3,152 @@
 import { useEffect, useMemo, useState } from "react";
 
 type SymbolState = {
-  position?: number; return?: number; transitions?: number; last_signal?: string;
-  max_drawdown?: number; closed_bars?: number;
+  position?: number; return?: number; transitions?: number; max_drawdown?: number;
+  completed_trades?: number; market_audit?: { status?: string; preregistered_specialist?: boolean; one_sided_95pct_lower_bound?: number | null };
 };
-type Leader = { model_id?: string; expression?: string; score?: number; status?: string };
+type Leader = {
+  model_id?: string; expression?: string; score?: number; status?: string;
+  median_return?: number; maximum_drawdown?: number; transitions?: number; minimum_live_bars?: number;
+  terminal_rejection?: boolean; completed_trades?: number; portfolio_return?: number;
+  portfolio_max_drawdown?: number; decision_state?: string;
+};
 type Runtime = {
-  updated_at?: string; server_received_at?: string; mode?: string;
-  source_status?: Record<string, string>; watchdog_status?: string;
-  source_reconnects_last_hour?: Record<string, number>; binance_queue_depth?: number;
-  full_system_audit?: { status?: string; checked_at?: string };
-  research_lab_tested_configs?: number; research_lab_completed_configs?: number;
-  research_lab_early_stopped_configs?: number; research_lab_viable_candidates?: number;
-  research_generated_hypotheses?: number; research_accepted_hypotheses?: number;
-  research_shadow_paper_eligible?: number; research_external_proposals?: number;
-  research_feedback_evaluated?: number; research_feedback_accepted?: number;
-  research_feedback_rejected?: number;
-  research_factor_memory?: { generation?: number; families?: number; cooling_down?: number };
-  research_strategy_memory?: { generation?: number; families?: number; cooling_down?: number };
+  updated_at?: string; server_received_at?: string; watchdog_status?: string;
+  source_status?: Record<string, string>; full_system_audit?: { status?: string };
+  research_lab_tested_configs?: number; research_lab_viable_candidates?: number;
+  research_factor_memory?: { cooling_down?: number };
+  research_hypothesis_lifecycle?: { tracked?: number; stage_counts?: Record<string, number> };
   research_compatibility_backends?: Record<string, { project?: string; available_in_controller_environment?: boolean }>;
-  research_candidate_funnel?: Record<string, number>;
+  research_generator_performance?: Record<string, { supported?: number; selected_for_expensive_validation?: number; accepted?: number; cooldown?: boolean }>;
   factor_model_paper?: {
-    status?: string; model_id?: string; expression?: string; validation_cost_aware_return?: number;
+    model_id?: string; expression?: string; validation_cost_aware_return?: number;
     execution_profile?: { rebalance_bars?: number; entry_abs_quantile?: number };
+    portfolio?: { return?: number; max_drawdown?: number };
     paper_governor?: {
-      status?: string; total_transitions?: number; required_transitions?: number;
-      median_return?: number; maximum_drawdown?: number; profitable_symbols?: number;
-      historical_selection_bias_passed?: boolean; forward_oos_confirmation_passed?: boolean;
-      blockers?: string[]; demo_orders_allowed?: boolean;
+      total_transitions?: number; total_completed_trades?: number; required_completed_trades_per_market?: number;
+      minimum_universal_markets?: number; universal_ready_markets?: string[]; specialist_ready_markets?: string[];
+      terminal_rejection?: boolean; forward_oos_confirmation_passed?: boolean; profitable_symbols?: number;
+      decision_state?: string; early_rejection_min_trades?: number; high_confidence_trades?: number;
     };
     symbols?: Record<string, SymbolState>;
   };
   factor_model_tournament?: {
-    leader_model_id?: string | null; active_models?: number; registry_models?: number;
-    leaderboard?: Leader[];
+    leader_model_id?: string | null; active_models?: number; registry_models?: number; leaderboard?: Leader[];
+    archived_models?: number;
+    recent_events?: Array<{ occurred_at?: string; type?: string; message?: string; model_id?: string }>;
+    stagnation?: { status?: string; reason?: string | null; recommended_action?: string | null };
   };
+  model_winner_notification?: { occurred_at?: string; previous_model_id?: string; model_id?: string; expression?: string };
+  notification_history?: Array<{ occurred_at?: string; category?: string; title?: string; message?: string }>;
   nautilus_replay_status?: string; freqtrade_replay_status?: string;
+  research_quality_reset?: { exact_shadow_replay_required?: boolean; active_models?: number; quarantined_models?: number; previous_models_quarantined?: number };
 };
 
 const pct = (value?: number) => value == null ? "—" : `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
-const integer = (value?: number) => (value ?? 0).toLocaleString("ru-RU");
+const count = (value?: number) => (value ?? 0).toLocaleString("ru-RU");
+const coin = (value: string) => value.replace("USDT", "");
 const position = (value?: number) => value === 1 ? "LONG" : value === -1 ? "SHORT" : "Вне рынка";
-const sourceNames: Record<string, string> = {
-  alpha_gfn: "Alpha-GFN", alphagen: "AlphaGen", autoresearch_trading: "AutoResearch",
-  open_coscientist: "Open Co-Scientist", qlib: "Qlib", rd_agent: "RD-Agent",
-  quantaalpha: "QuantaAlpha", deap: "DEAP", gplearn: "gplearn", optuna: "Optuna",
-};
 
-function candidateVerdict(runtime: Runtime | null) {
-  const paper = runtime?.factor_model_paper;
-  const governor = paper?.paper_governor;
-  const transitions = governor?.total_transitions ?? 0;
-  const live = governor?.median_return ?? 0;
-  const positives = governor?.profitable_symbols ?? 0;
-  const selectionPassed = Boolean(governor?.historical_selection_bias_passed);
-  if (!paper?.model_id) return { tone: "bad", label: "Кандидата нет", title: "Нужна новая гипотеза", text: "Ни одна модель не допущена даже к наблюдению." };
-  if (governor?.forward_oos_confirmation_passed && selectionPassed) return { tone: "good", label: "Сильный кандидат", title: "Готов к решению о чемпионстве", text: "Статистика и независимые проверки пройдены. Торговля всё равно включается отдельным решением." };
-  if (live < 0 || (transitions >= 4 && positives === 0)) return { tone: "bad", label: "Шансы сейчас низкие", title: "Кандидат пока проигрывает живую проверку", text: "Исторический результат был положительным, но новые наблюдения после расходов пока отрицательные. Чемпионом он не является." };
-  return { tone: "warn", label: "Шансы не определены", title: "Кандидат проходит живую проверку", text: "Переходов пока недостаточно, чтобы отличить устойчивый эффект от случайности. Чемпионом он не является." };
+function strategyName(expression?: string) {
+  if (!expression) return "Стратегия не загружена";
+  const match = expression.match(/^(-)?(?:rank|zscore|delta|ewm)\(([^,]+),(\d+)\)$/);
+  if (!match) return "Количественная стратегия";
+  const labels: Record<string, string> = {
+    funding_momentum_interaction: "Funding + импульс", volume_price_pressure: "Цена + объём",
+    return_1: "Импульс цены", oi_change: "Открытый интерес", funding_rate: "Funding",
+    premium_rate: "Фьючерсная премия",
+  };
+  return `${labels[match[2]] ?? match[2]} · ${match[3]} свечей${match[1] ? " · против движения" : ""}`;
 }
 
-function explainExpression(expression?: string) {
-  if (!expression) return "Правило модели не загружено";
-  const match = expression.match(/^(-)?(rank|zscore|delta|ewm)\(([^,]+),(\d+)\)$/);
-  if (!match) return expression;
-  const [, negative, transform, feature, window] = match;
-  const featureLabels: Record<string, string> = {
-    volume_price_pressure: "связь движения цены и аномального объёма",
-    return_1: "последнее изменение цены", oi_change: "изменение открытого интереса",
-    funding_rate: "ставку финансирования", premium_rate: "премию фьючерса",
-  };
-  const transformLabels: Record<string, string> = {
-    rank: "ранг", zscore: "отклонение от нормы", delta: "изменение", ewm: "сглаженное значение",
-  };
-  return `${negative ? "Обратный " : ""}${transformLabels[transform]} показателя «${featureLabels[feature] ?? feature}» за ${window} свечей`;
+function strategyExplanation(expression?: string) {
+  if (!expression) return "Правило пока не загружено.";
+  if (expression.includes("funding_momentum_interaction")) return "Модель сравнивает необычное сочетание ставки финансирования и ценового импульса с его недавней нормой. Знак минус означает контртрендовую ставку, когда это сочетание становится экстремальным.";
+  if (expression.includes("volume_price_pressure")) return "Модель ищет необычное сочетание движения цены и объёма и торгует его нормализацию.";
+  return "Модель превращает рыночный фактор в формальное правило входа и выхода. Полная формула сохранена ниже для проверки.";
 }
 
 export default function Page() {
   const [runtime, setRuntime] = useState<Runtime | null>(null);
   const [error, setError] = useState(false);
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(0);
   useEffect(() => {
     let active = true;
     const load = async () => {
       try {
         const response = await fetch(`/api/runtime?t=${Date.now()}`, { cache: "no-store" });
-        if (!response.ok) throw new Error("runtime unavailable");
-        const value = await response.json() as Runtime;
-        if (active) { setRuntime(value); setError(false); }
+        if (!response.ok) throw new Error();
+        if (active) { setRuntime(await response.json() as Runtime); setError(false); }
       } catch { if (active) setError(true); }
     };
     void load();
     const refresh = window.setInterval(load, 15_000);
     const clock = window.setInterval(() => setNow(Date.now()), 1_000);
-    return () => { active = false; window.clearInterval(refresh); window.clearInterval(clock); };
+    return () => { active = false; clearInterval(refresh); clearInterval(clock); };
   }, []);
 
   const paper = runtime?.factor_model_paper;
   const governor = paper?.paper_governor;
   const symbols = Object.entries(paper?.symbols ?? {});
-  const verdict = candidateVerdict(runtime);
-  const updated = runtime?.server_received_at ?? runtime?.updated_at;
-  const age = updated ? Math.max(0, Math.floor((now - new Date(updated).getTime()) / 1000)) : Infinity;
-  const fresh = age < 90;
+  const leaderboard = runtime?.factor_model_tournament?.leaderboard ?? [];
+  const active = runtime?.factor_model_tournament?.active_models ?? leaderboard.length;
+  const completed = governor?.total_completed_trades ?? 0;
+  const required = governor?.required_completed_trades_per_market ?? 20;
+  const best = Math.max(0, ...symbols.map(([, value]) => value.completed_trades ?? 0));
+  const bestSymbol = symbols.sort((a, b) => (b[1].completed_trades ?? 0) - (a[1].completed_trades ?? 0))[0]?.[0];
+  const passed = Boolean(governor?.forward_oos_confirmation_passed);
+  const rejected = Boolean(governor?.terminal_rejection);
+  const openReturn = paper?.portfolio?.return ?? 0;
+  const age = runtime?.server_received_at || runtime?.updated_at ? Math.max(0, Math.floor((now - new Date(runtime?.server_received_at ?? runtime?.updated_at ?? "").getTime()) / 1000)) : Infinity;
   const sourcesOk = runtime?.source_status?.bybit === "CONNECTED" && runtime?.source_status?.binance === "CONNECTED";
-  const systemOk = fresh && sourcesOk && runtime?.watchdog_status === "HEALTHY" && runtime?.full_system_audit?.status === "PASS";
-  const transitions = governor?.total_transitions ?? 0;
-  const required = governor?.required_transitions ?? 30;
+  const systemOk = age < 90 && sourcesOk && runtime?.watchdog_status === "HEALTHY" && runtime?.full_system_audit?.status === "PASS";
+  const noCandidate = active === 0;
+  const quarantined = Math.max(runtime?.research_quality_reset?.quarantined_models ?? 0, runtime?.factor_model_tournament?.archived_models ?? 0);
+  const decision = passed ? "Готов к отдельному решению о запуске" : noCandidate ? "Идёт новый поиск после проверки качества" : rejected ? "Кандидат отклонён" : "Торговать пока нельзя";
+  const stage = passed ? "Проверка завершена" : noCandidate ? "Новых кандидатов пока нет" : completed === 0 ? "Собираем первые завершённые сделки" : `Собрано ${completed} завершённых сделок`;
+  const lifecycle = runtime?.research_hypothesis_lifecycle?.stage_counts ?? {};
   const backends = useMemo(() => Object.entries(runtime?.research_compatibility_backends ?? {}).filter(([, value]) => value.available_in_controller_environment), [runtime]);
 
-  return <main>
-    <div className="shell">
-      <header>
-        <div><span className="brand">ATLAS</span><h1>Что происходит сейчас</h1></div>
-        <div className={`live ${systemOk ? "ok" : "bad"}`}><i />{error ? "Нет связи с панелью" : systemOk ? "Система работает корректно" : "Нужна проверка системы"}</div>
-      </header>
+  return <main><div className="shell">
+    <header><div><span className="brand">ATLAS</span><h1>Состояние торговой системы</h1></div><div className={`live ${systemOk ? "ok" : "bad"}`}><i />{error ? "Панель не получает данные" : systemOk ? "Система работает" : "Нужна проверка"}</div></header>
 
-      <section className={`verdict ${verdict.tone}`}>
-        <div className="verdictTop"><span>{verdict.label}</span><b>SHADOW · READ ONLY · сделки запрещены</b></div>
-        <h2>{verdict.title}</h2>
-        <p>{verdict.text}</p>
-        <div className="truthGrid">
-          <article><span>Статус</span><strong>Кандидат</strong><small>Не чемпион</small></article>
-          <article><span>Историческая проверка</span><strong className="positive">{pct(paper?.validation_cost_aware_return)}</strong><small>После учтённых расходов</small></article>
-          <article><span>Живая проверка</span><strong className={(governor?.median_return ?? 0) < 0 ? "negative" : "neutral"}>{pct(governor?.median_return)}</strong><small>Медиана по рынкам</small></article>
-          <article><span>Переходы позиции</span><strong>{transitions} / {required}</strong><small>Вход, выход или разворот</small></article>
-        </div>
-      </section>
+    <section className="hero">
+      <div className="eyebrow">РЕШЕНИЕ НА ЭТУ МИНУТУ</div>
+      <div className="heroTop"><div><h2>{decision}</h2><p>{passed ? "Кандидат прошёл независимое подтверждение. Реальная торговля всё равно включается только отдельным решением." : noCandidate ? `Прежние кандидаты не подтвердили результат при точном воспроизведении торговли и сняты с проверки (${quarantined}). Фабрика продолжает искать новые идеи.` : "Сейчас система исследует и наблюдает. Реальные ордера технически запрещены."}</p></div><span className={`decision ${passed ? "good" : rejected ? "bad" : "warn"}`}>{passed ? "ГОТОВ К РЕШЕНИЮ" : noCandidate ? "ПОИСК · БЕЗ ОРДЕРОВ" : rejected ? "ОТКЛОНЁН" : "SHADOW · БЕЗ ОРДЕРОВ"}</span></div>
+      <div className="answerGrid">
+        <article><span>Что у нас сейчас</span><strong>{active} кандидатов</strong><small>{stage}</small></article>
+        <article><span>Что выглядит хорошо</span><strong className={noCandidate ? "neutral" : openReturn >= 0 ? "positive" : "negative"}>{noCandidate ? "Контроль стал строже" : pct(openReturn)}</strong><small>{noCandidate ? "Ложные кандидаты больше не занимают ресурсы" : "Открытый результат портфеля, ещё не доказательство"}</small></article>
+        <article><span>Когда можно торговать</span><strong>{noCandidate ? "После нового отбора" : `${best}/${required} сделок`}</strong><small>{passed ? "Независимая проверка пройдена" : noCandidate ? "Сначала кандидат должен обойти простые контрольные стратегии и точный replay" : `Лучший рынок ${bestSymbol ? coin(bestSymbol) : "—"}; затем нужна статистическая прибыль`}</small></article>
+      </div>
+    </section>
 
-      <section className="card strategy">
-        <div className="sectionTitle"><div><span>КАК ОН ТОРГУЕТ</span><h2>Правила текущего кандидата</h2></div><code>{paper?.expression ?? "—"}</code></div>
-        <p className="plainFormula">{explainExpression(paper?.expression)}</p>
-        <div className="ruleGrid">
-          <article><b>Что измеряет</b><p>Давление объёма на цену. Знак «минус» означает ставку на обратное движение относительно высокого ранга фактора.</p></article>
-          <article><b>Когда входит</b><p>Когда абсолютное значение фактора превышает 95-й процентиль последних 288 наблюдений.</p></article>
-          <article><b>Когда выходит</b><p>Когда фактор пересекает ноль. Проверка выполняется каждые {paper?.execution_profile?.rebalance_bars ?? "—"} свечей.</p></article>
-          <article><b>Размер и расходы</b><p>В SHADOW используется позиция −1 / 0 / +1 и списывается 5 bps за каждое изменение позиции.</p></article>
-        </div>
-      </section>
+    {!noCandidate && <section className="card leader">
+      <div className="sectionTitle"><div><span>ТЕКУЩИЙ ЛИДЕР</span><h2>{strategyName(paper?.expression)}</h2></div><b className="rank">№1 из {active || "—"}</b></div>
+      <p>Это лучший кандидат сейчас, но не чемпион. Его преимущество пока предварительное и может измениться по мере новых завершённых сделок.</p>
+      <div className="metrics"><div><span>Открытый результат</span><b className={openReturn >= 0 ? "positive" : "negative"}>{pct(openReturn)}</b></div><div><span>Просадка портфеля</span><b>{pct(paper?.portfolio?.max_drawdown)}</b></div><div><span>Завершённые сделки</span><b>{completed}</b></div><div><span>Изменения позиции</span><b>{governor?.total_transitions ?? 0}</b></div></div>
+      <div className="next"><b>Следующий объективный рубеж</b><span>{passed ? "Проверка пройдена — требуется отдельное решение владельца о запуске." : `Накопить минимум ${required} завершённых сделок на одном заранее выбранном рынке. Сейчас максимум ${best}. После этого нижняя 95%-граница средней сделки должна стать выше нуля. Явно отрицательная модель может быть остановлена уже после ${governor?.early_rejection_min_trades ?? 8} сделок; высокая уверенность начинается с ${governor?.high_confidence_trades ?? 50}.`}</span></div>
+      {runtime?.factor_model_tournament?.stagnation?.status !== "PROGRESSING" && <div className="alert"><b>Обнаружено узкое место</b><span>{runtime?.factor_model_tournament?.stagnation?.status === "STALLED_EXIT_COLLECTION" ? "Позиции менялись, но завершённые сделки не накапливались. Теперь параллельно учитываются выход по нормализации, пересечению нуля и максимальному времени удержания." : "Сигналы слишком редкие — система проверяет пороги входа и доступность факторов."}</span></div>}
+    </section>}
 
-      <section className="card">
-        <div className="sectionTitle"><div><span>ФАКТИЧЕСКИЙ РЕЗУЛЬТАТ</span><h2>Что уже сделал кандидат</h2></div><strong>{symbols.filter(([, s]) => (s.return ?? 0) > 0).length} плюс · {symbols.filter(([, s]) => (s.return ?? 0) < 0).length} минус · {symbols.filter(([, s]) => (s.return ?? 0) === 0).length} без результата</strong></div>
-        <p className="explanation">«Прибыльные рынки» — это не отдельное требование к монетам. Это проверка широты: модель должна работать не на одной случайно удачной монете, а на большинстве независимых рынков.</p>
-        <div className="marketTable">
-          <div className="marketHead"><span>Рынок</span><span>Сейчас</span><span>Результат</span><span>Переходы</span></div>
-          {symbols.map(([symbol, state]) => <div className="marketRow" key={symbol}>
-            <b>{symbol.replace("USDT", "")}</b><span>{position(state.position)}</span>
-            <strong className={(state.return ?? 0) < 0 ? "negative" : (state.return ?? 0) > 0 ? "positive" : "neutral"}>{pct(state.return)}</strong>
-            <span>{state.transitions ?? 0}{state.position === 0 && (state.transitions ?? 0) >= 2 ? " · цикл закрыт" : ""}</span>
-          </div>)}
-        </div>
-      </section>
+    {noCandidate && <section className="card leader"><div className="sectionTitle"><div><span>ПЕРЕЗАПУСК КАЧЕСТВА</span><h2>Слабые модели убраны, история сохранена</h2></div><b className="rank">{quarantined} в карантине</b></div><p>Новая модель попадёт в SHADOW только если её точная торговая логика остаётся положительной после расходов, она обходит простые контрольные стратегии и выдерживает независимую проверку. Это временно уменьшает количество кандидатов, но повышает смысл каждого из них.</p></section>}
 
-      <section className="card">
-        <div className="sectionTitle"><div><span>ПУТЬ К ЧЕМПИОНУ</span><h2>Что должно измениться</h2></div><b className={`pill ${verdict.tone}`}>{verdict.label}</b></div>
-        <div className="gates">
-          <article className={transitions >= required ? "done" : "open"}><i>{transitions >= required ? "✓" : "1"}</i><div><b>Получить достаточно реальных переходов</b><p>Сейчас {transitions} из {required}. Если сигналы перестанут появляться, модель будет признана неактивной, а не будет ждать бесконечно.</p></div></article>
-          <article className={(governor?.median_return ?? 0) > 0 ? "done" : "blocked"}><i>{(governor?.median_return ?? 0) > 0 ? "✓" : "2"}</i><div><b>Стать положительной после расходов</b><p>Сейчас медианный результат {pct(governor?.median_return)}.</p></div></article>
-          <article className={(governor?.profitable_symbols ?? 0) >= 4 ? "done" : "blocked"}><i>{(governor?.profitable_symbols ?? 0) >= 4 ? "✓" : "3"}</i><div><b>Показать широкую устойчивость</b><p>Положительный результат сейчас на {governor?.profitable_symbols ?? 0} из {symbols.length} рынков. Это защита от случайной удачи на одной монете.</p></div></article>
-          <article className={governor?.historical_selection_bias_passed || governor?.forward_oos_confirmation_passed ? "done" : "blocked"}><i>{governor?.historical_selection_bias_passed || governor?.forward_oos_confirmation_passed ? "✓" : "4"}</i><div><b>Снять риск переобучения</b><p>Исторический DSR/PBO не пройден; исправить это может только независимое подтверждение на новых данных.</p></div></article>
-        </div>
-      </section>
+    <section className="card tournament">
+      <div className="sectionTitle"><div><span>ТУРНИР</span><h2>Все кандидаты продолжают проверку параллельно</h2></div></div>
+      <p>Новый кандидат может появиться, пока текущие тестируются. Лидер меняется автоматически только по фактическому результату и риску.</p>
+      <div className="leaderboard"><div className="tableHead"><span>Место / стратегия</span><span>Портфель</span><span>Просадка</span><span>Доказательства</span></div>{leaderboard.map((item, index) => <div className="tableRow" key={item.model_id ?? index}><div><b>{index + 1}. {strategyName(item.expression)}</b><small>{item.model_id === runtime?.factor_model_tournament?.leader_model_id ? "Временный лидер" : item.terminal_rejection ? "Отклонён" : "Продолжает наблюдение"}</small></div><strong className={(item.portfolio_return ?? item.median_return ?? 0) >= 0 ? "positive" : "negative"}>{pct(item.portfolio_return ?? item.median_return)}</strong><span>{pct(item.portfolio_max_drawdown ?? item.maximum_drawdown)}</span><span>{item.completed_trades ?? 0} сделок · {item.decision_state === "PROMISING" ? "перспективен" : item.decision_state === "REJECTED" ? "отклонён" : item.decision_state === "ACCEPTED_CHAMPION_CANDIDATE" ? "готов к решению" : "сбор данных"}</span></div>)}</div>
+      {(runtime?.factor_model_tournament?.recent_events?.length ?? 0) > 0 && <div className="events"><b>Последние события</b>{runtime?.factor_model_tournament?.recent_events?.slice(0, 3).map((event, index) => <div key={`${event.occurred_at}-${index}`}><span>{event.message}</span><small>{event.occurred_at ? new Date(event.occurred_at).toLocaleString("ru-RU") : "—"}</small></div>)}</div>}
+    </section>
 
-      <section className="card research">
-        <div className="sectionTitle"><div><span>ФАБРИКА СТРАТЕГИЙ</span><h2>Откуда берутся идеи и куда исчезают слабые</h2></div><strong>{runtime?.research_factor_memory?.cooling_down ?? 0} семейств в cooldown</strong></div>
-        <div className="funnel">
-          <article><strong>{integer(runtime?.research_external_proposals)}</strong><span>уникальных внешних предложений</span></article><i>→</i>
-          <article><strong>{integer(runtime?.research_generated_hypotheses)}</strong><span>разнообразных гипотез выбрано</span></article><i>→</i>
-          <article><strong>{integer(runtime?.research_shadow_paper_eligible)}</strong><span>прошли базовую проверку</span></article><i>→</i>
-          <article><strong>{integer(runtime?.research_accepted_hypotheses)}</strong><span>прошли полный отбор</span></article>
-        </div>
-        <div className="generatorList">{backends.map(([key, value]) => <span key={key}>{sourceNames[key] ?? value.project ?? key}</span>)}</div>
-        <p className="explanation">Точные дубликаты объединяются по структуре формулы. Почти одинаковые сигналы удаляются по корреляции. После повторных провалов целое семейство временно исключается ещё до дорогого расчёта; небольшая контрольная доля сохраняется, чтобы заметить смену рынка.</p>
-        <div className="researchStats"><span>Стратегий протестировано <b>{integer(runtime?.research_lab_tested_configs)}</b></span><span>Полностью проверено <b>{integer(runtime?.research_lab_completed_configs)}</b></span><span>Остановлено досрочно <b>{integer(runtime?.research_lab_early_stopped_configs)}</b></span><span>Готовых к продвижению <b>{integer(runtime?.research_lab_viable_candidates)}</b></span></div>
-      </section>
+    <details className="card"><summary><span><em>РЫНКИ</em><b>Открытые позиции и промежуточный результат</b></span><i>Показать</i></summary><p className="note">Процент ниже — текущая переоценка открытой или наблюдаемой позиции. Ноль завершённых сделок означает, что статистического вывода ещё нет.</p><div className="marketTable">{symbols.map(([symbol, value]) => <div className="marketRow" key={symbol}><b>{coin(symbol)}</b><span>{position(value.position)}</span><strong className={(value.return ?? 0) > 0 ? "positive" : (value.return ?? 0) < 0 ? "negative" : "neutral"}>{pct(value.return)}</strong><span>{value.completed_trades ?? 0} завершённых</span></div>)}</div></details>
 
-      <section className="card compact">
-        <div><span>СБОР ДАННЫХ</span><b className={sourcesOk ? "positive" : "negative"}>{sourcesOk ? "Bybit и Binance подключены" : "Есть проблема соединения"}</b></div>
-        <div><span>КОНТРОЛЬ ПРОЦЕССОВ</span><b className={runtime?.watchdog_status === "HEALTHY" ? "positive" : "negative"}>{runtime?.watchdog_status ?? "—"}</b></div>
-        <div><span>ПОЛНЫЙ АУДИТ</span><b className={runtime?.full_system_audit?.status === "PASS" ? "positive" : "negative"}>{runtime?.full_system_audit?.status ?? "—"}</b></div>
-        <div><span>НЕЗАВИСИМЫЙ REPLAY</span><b>Nautilus {runtime?.nautilus_replay_status ?? "—"} · Freqtrade {runtime?.freqtrade_replay_status ?? "—"}</b></div>
-      </section>
-      <footer>Обновлено {Number.isFinite(age) ? `${age} сек. назад` : "—"} · Панель только читает состояние и не может отправлять ордера</footer>
-    </div>
-  </main>;
+    <details className="card"><summary><span><em>КАК РАБОТАЕТ ЛИДЕР</em><b>Понятное правило и точная формула</b></span><i>Показать</i></summary><p className="plain">{strategyExplanation(paper?.expression)}</p><code className="formula">{paper?.expression ?? "—"}</code><p className="note">Сигнал проверяется каждые {paper?.execution_profile?.rebalance_bars ?? "—"} свечей. В SHADOW учитываются торговые расходы; позиции ограничены значениями −1, 0 и +1.</p></details>
+
+    <details className="card"><summary><span><em>ФАБРИКА СТРАТЕГИЙ</em><b>Откуда берутся идеи и куда уходят слабые</b></span><i>Показать</i></summary><div className="funnel"><div><b>{count(runtime?.research_hypothesis_lifecycle?.tracked)}</b><span>идей сохранено</span></div><div><b>{count(lifecycle.FILTERED_BEFORE_EXPENSIVE_VALIDATION)}</b><span>отсечено рано</span></div><div><b>{count(lifecycle.SHADOW_PAPER_FORWARD_OOS)}</b><span>дошли до SHADOW</span></div><div><b>{count(lifecycle.ACCEPTED_FOR_STRATEGY_FACTORY)}</b><span>принято окончательно</span></div></div><p className="note">Идеи не исчезают: дубликаты объединяются, слабые семейства временно останавливаются, а перспективные проходят дорогую проверку. Сейчас в cooldown: {count(runtime?.research_factor_memory?.cooling_down)} семейств.</p><div className="chips">{backends.map(([key, value]) => <span key={key}>{value.project ?? key}</span>)}</div></details>
+
+    <details className="card"><summary><span><em>ТЕХНИЧЕСКОЕ СОСТОЯНИЕ</em><b>Источники, контроль и независимый replay</b></span><i>Показать</i></summary><div className="health"><div><span>Данные</span><b className={sourcesOk ? "positive" : "negative"}>{sourcesOk ? "Bybit и Binance подключены" : "Проблема соединения"}</b></div><div><span>Контроль</span><b>{runtime?.watchdog_status ?? "—"}</b></div><div><span>Полный аудит</span><b>{runtime?.full_system_audit?.status ?? "—"}</b></div><div><span>Replay</span><b>Nautilus {runtime?.nautilus_replay_status ?? "—"} · Freqtrade {runtime?.freqtrade_replay_status ?? "—"}</b></div></div></details>
+
+    <details className="card"><summary><span><em>ИСТОРИЯ УВЕДОМЛЕНИЙ</em><b>Важные изменения и движение к торговле</b></span><i>Показать</i></summary><p className="note">Сохраняются предупреждения и положительные этапы. Новые события находятся сверху; локально хранится до 500 записей, последние 50 доступны здесь.</p><div className="history">{(runtime?.notification_history?.length ?? 0) === 0 ? <span className="empty">Новых событий после включения журнала пока нет.</span> : runtime?.notification_history?.slice().reverse().map((event, index) => <article key={`${event.occurred_at}-${index}`}><div><b>{event.title ?? "Событие Atlas"}</b><small>{event.category === "PROGRESS" ? "Прогресс" : "Состояние системы"}</small></div><p>{event.message}</p><time>{event.occurred_at ? new Date(event.occurred_at).toLocaleString("ru-RU") : "—"}</time></article>)}</div></details>
+
+    <footer>Обновлено {Number.isFinite(age) ? `${age} сек. назад` : "—"} · Панель только читает состояние и не может отправлять ордера</footer>
+  </div></main>;
 }

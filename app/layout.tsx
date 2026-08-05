@@ -16,9 +16,16 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://atlas-crypto-dashboard.atlas-crypto-dima.workers.dev/"),
   title: "Atlas — кандидат и состояние системы",
   description: "Понятный статус Atlas: работает ли система, как торгует кандидат и может ли он стать чемпионом.",
+  manifest: "/site.webmanifest",
+  appleWebApp: {
+    capable: true,
+    title: "ATLAS",
+    statusBarStyle: "black-translucent",
+  },
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
   openGraph: {
     title: "Atlas — кандидат и состояние системы",

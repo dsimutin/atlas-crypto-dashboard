@@ -17,10 +17,12 @@ test("renders the Russian decision dashboard", async () => {
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /Atlas — кандидат и состояние системы/);
-  assert.match(html, /Что происходит сейчас/);
-  assert.match(html, /КАК ОН ТОРГУЕТ/);
-  assert.match(html, /ФАКТИЧЕСКИЙ РЕЗУЛЬТАТ/);
-  assert.match(html, /ПУТЬ К ЧЕМПИОНУ/);
+  assert.match(html, /Состояние торговой системы/);
+  assert.match(html, /Что у нас сейчас/);
+  assert.match(html, /Что выглядит хорошо/);
+  assert.match(html, /Когда можно торговать/);
+  assert.match(html, /ТЕКУЩИЙ ЛИДЕР|ПЕРЕЗАПУСК КАЧЕСТВА/);
+  assert.match(html, /ТУРНИР/);
   assert.match(html, /ФАБРИКА СТРАТЕГИЙ/);
   assert.doesNotMatch(html, /7 полных дней|чистые дни|из 7/i);
 });
@@ -30,6 +32,6 @@ test("has no secret inputs or network execution surface", async () => {
   const html = await response.text();
   assert.doesNotMatch(html, /<form|<input|<textarea|contenteditable/i);
   assert.doesNotMatch(html, /apiKey|apiSecret|placeOrder|submitOrder/i);
-  assert.match(html, /SHADOW · READ ONLY/);
+  assert.match(html, /(?:SHADOW|ПОИСК) · БЕЗ ОРДЕРОВ/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });
