@@ -12,19 +12,17 @@ async function render() {
   );
 }
 
-test("renders the Russian readiness console", async () => {
+test("renders the Russian decision dashboard", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /Atlas Crypto System — Readiness/);
-  assert.match(html, /Загружаем актуальное состояние/);
-  assert.doesNotMatch(html, /Последний статус устарел/);
-  assert.match(html, /ЧТО ДЕЛАТЬ СЕЙЧАС/);
-  assert.match(html, /БЛИЖАЙШАЯ КОНТРОЛЬНАЯ ТОЧКА/);
-  assert.match(html, /ТЕКУЩИЙ PAPER-ДОПУСК/);
-  assert.match(html, /0.*из.*30.*переходов/);
-  assert.match(html, /7 полных дней, 30 переходов/);
-  assert.match(html, /Уведомления о новом лидере/);
+  assert.match(html, /Atlas — кандидат и состояние системы/);
+  assert.match(html, /Что происходит сейчас/);
+  assert.match(html, /КАК ОН ТОРГУЕТ/);
+  assert.match(html, /ФАКТИЧЕСКИЙ РЕЗУЛЬТАТ/);
+  assert.match(html, /ПУТЬ К ЧЕМПИОНУ/);
+  assert.match(html, /ФАБРИКА СТРАТЕГИЙ/);
+  assert.doesNotMatch(html, /7 полных дней|чистые дни|из 7/i);
 });
 
 test("has no secret inputs or network execution surface", async () => {

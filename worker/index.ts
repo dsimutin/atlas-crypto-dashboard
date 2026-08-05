@@ -6,7 +6,7 @@ interface WorkerEnv extends Env {
   RUNTIME_SYNC_TOKEN: string;
 }
 
-const DASHBOARD_BUILD_ID = "2026.08.05-9";
+const DASHBOARD_BUILD_ID = "2026.08.05-10";
 const MAX_RUNTIME_PAYLOAD_BYTES = 65_536;
 
 const runtimeFields = new Set([
