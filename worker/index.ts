@@ -93,6 +93,8 @@ const runtimeFields = new Set([
   "scalp_tlob_challenger", "scalp_model_comparison",
   "native_l2_dataset", "native_l2_sequences", "native_l2_tlob", "native_l2_controller",
   "multi_model_portfolio",
+  "multi_model_ledger",
+  "multi_model_demo_governance",
 ]);
 
 function jsonResponse(value: unknown, status = 200): Response {
