@@ -91,6 +91,7 @@ const runtimeFields = new Set([
   "cryptofeed_sidecar",
   "scalp_horizon_prescreen", "scalp_tail_classifier",
   "scalp_tlob_challenger", "scalp_model_comparison",
+  "native_l2_dataset",
 ]);
 
 function jsonResponse(value: unknown, status = 200): Response {
