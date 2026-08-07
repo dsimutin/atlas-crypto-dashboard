@@ -95,6 +95,7 @@ const runtimeFields = new Set([
   "multi_model_portfolio",
   "multi_model_ledger",
   "multi_model_demo_governance",
+  "stall_acceleration",
 ]);
 
 function jsonResponse(value: unknown, status = 200): Response {
