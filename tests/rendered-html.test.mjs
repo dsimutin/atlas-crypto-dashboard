@@ -55,6 +55,6 @@ test("includes loading, error and empty states", async () => {
   assert.match(source, /Atlas обновляет состояние/);
   assert.match(source, /Не удалось обновить данные/);
   assert.match(source, /Сейчас открытых позиций нет/);
-  assert.match(source, /Пока недостаточно данных для выбора лидера/);
+  assert.match(source, /Пока недостаточно данных для выбора текущего кандидата/);
   assert.match(source, /Биржа не подключена/);
 });
