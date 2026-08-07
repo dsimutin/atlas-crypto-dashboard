@@ -89,6 +89,8 @@ const runtimeFields = new Set([
   "counterfactual_gate_audit", "strategy_robustness",
   "full_system_audit", "data_acceptance",
   "cryptofeed_sidecar",
+  "scalp_horizon_prescreen", "scalp_tail_classifier",
+  "scalp_tlob_challenger", "scalp_model_comparison",
 ]);
 
 function jsonResponse(value: unknown, status = 200): Response {

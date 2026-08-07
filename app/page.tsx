@@ -38,6 +38,7 @@ type Runtime = {
   nautilus_replay_status?: string; freqtrade_replay_status?: string;
   scalp_shadow?: { status?: string; completed_trades?: number; mean_net_return_bps?: number; promotion_blockers?: string[] };
   scalp_admission?: { admitted_lane_ids?: string[]; rejected_lane_ids?: string[]; next_action?: string };
+  scalp_model_comparison?: { status?: string; admitted_models?: string[]; next_action?: string; reason?: string };
 };
 
 const STATUS: Record<string, { label: string; tone: Tone }> = {
