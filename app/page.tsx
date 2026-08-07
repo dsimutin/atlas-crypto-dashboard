@@ -1,160 +1,167 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
+type Tone = "neutral" | "warning" | "positive" | "negative";
+type Tab = "home" | "trading" | "learning" | "settings";
 type SymbolState = {
-  position?: number; return?: number; transitions?: number; max_drawdown?: number;
-  completed_trades?: number; market_audit?: { status?: string; preregistered_specialist?: boolean; one_sided_95pct_lower_bound?: number | null };
+  position?: number; return?: number; max_drawdown?: number; completed_trades?: number;
+  trade_entry_price?: number | null; current_price?: number | null;
+  open_trade_return?: number | null; bars_in_position?: number;
+  market_audit?: { status?: string; one_sided_95pct_lower_bound?: number | null; live_data_available?: boolean };
 };
 type Leader = {
-  model_id?: string; expression?: string; score?: number; status?: string;
-  median_return?: number; maximum_drawdown?: number; transitions?: number; minimum_live_bars?: number;
-  terminal_rejection?: boolean; completed_trades?: number; portfolio_return?: number;
-  portfolio_max_drawdown?: number; decision_state?: string;
+  model_id?: string; expression?: string; status?: string; completed_trades?: number;
+  portfolio_return?: number; portfolio_max_drawdown?: number; decision_state?: string;
 };
+type Event = { occurred_at?: string; category?: string; title?: string; message?: string };
 type Runtime = {
-  updated_at?: string; server_received_at?: string; watchdog_status?: string;
-  source_status?: Record<string, string>; full_system_audit?: { status?: string };
-  research_lab_tested_configs?: number; research_lab_viable_candidates?: number;
-  research_factor_memory?: { cooling_down?: number };
-  research_hypothesis_lifecycle?: { tracked?: number; stage_counts?: Record<string, number> };
-  research_compatibility_backends?: Record<string, { project?: string; available_in_controller_environment?: boolean }>;
-  research_generator_performance?: Record<string, { supported?: number; selected_for_expensive_validation?: number; accepted?: number; cooldown?: boolean }>;
-  research_family_incubators?: Record<string, { finalists?: number; best_validation_return?: number; best_validation_trades?: number; best_exit_mode?: string; cost_sensitivity?: { returns?: Record<string, number>; stress_2x_positive?: boolean }; specialist_route?: { status?: string; symbol?: string; validation?: { return?: number; max_drawdown?: number; trades?: number } }; viable?: boolean }>;
+  updated_at?: string; server_received_at?: string; mode?: string; watchdog_status?: string;
+  modeled_capital_usdt?: string; risk_per_trade_fraction?: number; risk_budget_usdt?: string;
+  source_status?: Record<string, string>; execution_network_available?: boolean;
+  demo_open_orders?: number; demo_open_positions?: number; demo_orders_total?: number;
+  full_system_audit?: { status?: string; public_observation_status?: string; demo_broker_status?: string };
+  trading_gate_audit?: { status?: string; current_blocking_gate?: string | null; demo_eligible_markets?: string[]; gates?: Array<{ gate?: string; status?: string; reason?: string | null }> };
+  data_acceptance?: { status?: string; accepted_day_count?: number; required_accepted_days?: number; accepted_valid_5m_windows?: number; required_valid_5m_windows?: number; official_observation_ready?: boolean; day_status?: Record<string, { status?: string; reasons?: string[]; metrics?: { valid_coverage_ratio?: number } }> };
   factor_model_paper?: {
-    model_id?: string; expression?: string; validation_cost_aware_return?: number;
-    execution_profile?: { rebalance_bars?: number; entry_abs_quantile?: number };
-    portfolio?: { return?: number; max_drawdown?: number };
-    paper_governor?: {
-      total_transitions?: number; total_completed_trades?: number; required_completed_trades_per_market?: number;
-      minimum_universal_markets?: number; universal_ready_markets?: string[]; specialist_ready_markets?: string[];
-      terminal_rejection?: boolean; forward_oos_confirmation_passed?: boolean; profitable_symbols?: number;
-      decision_state?: string; early_rejection_min_trades?: number; high_confidence_trades?: number;
-    };
+    model_id?: string; expression?: string;
+    portfolio?: { return?: number; closed_trade_return?: number; open_mark_to_market_return?: number; max_drawdown?: number };
+    paper_governor?: { total_completed_trades?: number; required_completed_trades_per_market?: number; minimum_universal_markets?: number; universal_ready_markets?: string[]; terminal_rejection?: boolean; forward_oos_confirmation_passed?: boolean; decision_state?: string };
     symbols?: Record<string, SymbolState>;
   };
-  factor_model_tournament?: {
-    leader_model_id?: string | null; active_models?: number; registry_models?: number; leaderboard?: Leader[];
-    archived_models?: number;
-    recent_events?: Array<{ occurred_at?: string; type?: string; message?: string; model_id?: string }>;
-    stagnation?: { status?: string; reason?: string | null; recommended_action?: string | null };
-  };
-  model_winner_notification?: { occurred_at?: string; previous_model_id?: string; model_id?: string; expression?: string };
-  notification_history?: Array<{ occurred_at?: string; category?: string; title?: string; message?: string }>;
+  factor_model_tournament?: { leader_model_id?: string | null; active_models?: number; registry_models?: number; archived_models?: number; leaderboard?: Leader[]; recent_events?: Event[] };
+  notification_history?: Event[];
+  research_hypothesis_lifecycle?: { tracked?: number; stage_counts?: Record<string, number> };
+  research_lab_tested_configs?: number; research_lab_viable_candidates?: number;
+  research_rejection_analysis?: { evaluated_finalists?: number; accepted?: number; dominant_reason?: string | null; next_action?: string };
+  microstructure_model_validation?: { signal_parity?: string; drift?: string; l2_execution?: string; nautilus_differential?: string; promotion_oracles_passed?: boolean };
   nautilus_replay_status?: string; freqtrade_replay_status?: string;
-  research_quality_reset?: { exact_shadow_replay_required?: boolean; active_models?: number; quarantined_models?: number; previous_models_quarantined?: number };
-  research_rejection_analysis?: { evaluated_finalists?: number; accepted?: number; primary_reasons?: Record<string, number>; dominant_reason?: string | null; assessment?: string; next_action?: string };
+  scalp_shadow?: { status?: string; completed_trades?: number; mean_net_return_bps?: number; promotion_blockers?: string[] };
+  scalp_admission?: { admitted_lane_ids?: string[]; rejected_lane_ids?: string[]; next_action?: string };
 };
 
-const pct = (value?: number) => value == null ? "—" : `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
-const count = (value?: number) => (value ?? 0).toLocaleString("ru-RU");
+const STATUS: Record<string, { label: string; tone: Tone }> = {
+  COLLECTING_DATA: { label: "Собирает данные", tone: "warning" },
+  COLLECTING_SHADOW: { label: "Собирает статистику", tone: "warning" },
+  PROMISING: { label: "Показывает хороший результат", tone: "positive" },
+  INSUFFICIENT_EVIDENCE: { label: "Пока недостаточно данных", tone: "neutral" },
+  REJECTED: { label: "Отклонена", tone: "negative" },
+  REJECTED_PRESCREEN: { label: "Отклонена после проверки", tone: "negative" },
+  REJECTED_L2_ECONOMICS: { label: "Не прошла проверку расходов", tone: "negative" },
+  ACTIVE: { label: "Активна", tone: "positive" },
+  PASS: { label: "Проверено", tone: "positive" },
+  READY: { label: "Проверка завершена", tone: "positive" },
+  HEALTHY: { label: "Работает нормально", tone: "positive" },
+};
+const GATES: Record<string, string> = {
+  MARKET_DATA: "Проверка рыночных данных", SHADOW_TRADING: "Виртуальная симуляция",
+  FORWARD_TRADE_EVIDENCE: "Сбор статистики сделок", PROMOTION_ORACLES: "Проверка стабильности",
+  DEMO_BROKER: "Проверка риска и биржи", CHAMPION: "Выбор стратегии для запуска",
+};
+const REASONS: Record<string, string> = {
+  INSUFFICIENT_SAMPLES: "Недостаточно наблюдений", INSUFFICIENT_COVERAGE: "Недостаточное покрытие данных",
+  INSUFFICIENT_SYMBOLS: "Недостаточно рынков", prescreen_economics: "Результат не покрывает торговые расходы",
+};
+const pct = (value?: number | null) => value == null || !Number.isFinite(value) ? "—" : `${value >= 0 ? "+" : "−"}${(Math.abs(value) * 100).toFixed(2)}%`;
+const dd = (value?: number | null) => value == null ? "—" : `−${(Math.abs(value) * 100).toFixed(2)}%`;
+const number = (value?: number) => (value ?? 0).toLocaleString("ru-RU");
 const coin = (value: string) => value.replace("USDT", "");
-const position = (value?: number) => value === 1 ? "LONG" : value === -1 ? "SHORT" : "Вне рынка";
-
+const price = (value?: number | null) => value == null ? "—" : value.toLocaleString("ru-RU", { maximumFractionDigits: value < 1 ? 6 : 2 });
+const humanStatus = (value?: string) => STATUS[value ?? ""] ?? { label: value ? "Продолжает проверку" : "Статус уточняется", tone: "neutral" as Tone };
 function strategyName(expression?: string) {
-  if (!expression) return "Стратегия не загружена";
-  const match = expression.match(/^(-)?(?:rank|zscore|delta|ewm)\(([^,]+),(\d+)\)$/);
-  if (!match) return "Количественная стратегия";
-  const labels: Record<string, string> = {
-    funding_momentum_interaction: "Funding + импульс", volume_price_pressure: "Цена + объём",
-    return_1: "Импульс цены", oi_change: "Открытый интерес", funding_rate: "Funding",
-    premium_rate: "Фьючерсная премия",
-  };
-  return `${labels[match[2]] ?? match[2]} · ${match[3]} свечей${match[1] ? " · против движения" : ""}`;
+  if (!expression) return "Пока нет выбранной стратегии";
+  if (expression.includes("liquidation_notional")) return expression.startsWith("event") ? "Ликвидационный импульс" : "Ликвидационный импульс — контроль";
+  if (expression.includes("cross_venue")) return "Расхождение цен между биржами";
+  if (expression.includes("funding")) return "Funding и ценовой импульс";
+  if (expression.includes("volume")) return "Давление цены и объёма";
+  return "Количественная стратегия";
 }
 
-function strategyExplanation(expression?: string) {
-  if (!expression) return "Правило пока не загружено.";
-  if (expression.includes("funding_momentum_interaction")) return "Модель сравнивает необычное сочетание ставки финансирования и ценового импульса с его недавней нормой. Знак минус означает контртрендовую ставку, когда это сочетание становится экстремальным.";
-  if (expression.includes("volume_price_pressure")) return "Модель ищет необычное сочетание движения цены и объёма и торгует его нормализацию.";
-  return "Модель превращает рыночный фактор в формальное правило входа и выхода. Полная формула сохранена ниже для проверки.";
+function Badge({ status, label }: { status?: string; label?: string }) {
+  const mapped = humanStatus(status);
+  return <span className={`badge ${mapped.tone}`}><i aria-hidden="true" />{label ?? mapped.label}</span>;
+}
+function Metric({ label, value, hint, tone }: { label: string; value: string; hint?: string; tone?: Tone }) {
+  return <div className="metric"><span>{label}</span><strong className={tone}>{value}</strong>{hint && <small>{hint}</small>}</div>;
+}
+function Technical({ children }: { children: React.ReactNode }) {
+  return <details className="technical"><summary>Технические детали <span>⌄</span></summary><div>{children}</div></details>;
+}
+function PositionCard({ symbol, item }: { symbol: string; item: SymbolState }) {
+  const long = item.position === 1;
+  return <article className="positionCard"><div className="positionHead"><div><b>{coin(symbol)}</b><span className="virtual">Виртуально</span></div><Badge label={long ? "LONG" : "SHORT"} status={long ? "ACTIVE" : "COLLECTING_DATA"} /></div><strong className={(item.open_trade_return ?? 0) >= 0 ? "positive" : "negative"}>{pct(item.open_trade_return)}</strong><p>{price(item.trade_entry_price)} <span>→</span> {price(item.current_price)}</p><small>В позиции: {number(item.bars_in_position)} свечей</small></article>;
 }
 
 export default function Page() {
   const [runtime, setRuntime] = useState<Runtime | null>(null);
   const [error, setError] = useState(false);
+  const [tab, setTab] = useState<Tab>("home");
   const [now, setNow] = useState(0);
   useEffect(() => {
     let active = true;
-    const load = async () => {
-      try {
-        const response = await fetch(`/api/runtime?t=${Date.now()}`, { cache: "no-store" });
-        if (!response.ok) throw new Error();
-        if (active) { setRuntime(await response.json() as Runtime); setError(false); }
-      } catch { if (active) setError(true); }
-    };
-    void load();
-    const refresh = window.setInterval(load, 15_000);
-    const clock = window.setInterval(() => setNow(Date.now()), 1_000);
+    const load = async () => { try { const response = await fetch(`/api/runtime?t=${Date.now()}`, { cache: "no-store" }); if (!response.ok) throw new Error(); const data = await response.json() as Runtime; if (active) { setRuntime(data); setError(false); } } catch { if (active) setError(true); } };
+    void load(); const refresh = window.setInterval(load, 15_000); const clock = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => { active = false; clearInterval(refresh); clearInterval(clock); };
   }, []);
 
   const paper = runtime?.factor_model_paper;
   const governor = paper?.paper_governor;
   const symbols = Object.entries(paper?.symbols ?? {});
+  const positions = symbols.filter(([, state]) => (state.position ?? 0) !== 0);
   const leaderboard = runtime?.factor_model_tournament?.leaderboard ?? [];
-  const active = runtime?.factor_model_tournament?.active_models ?? leaderboard.length;
+  const leader = leaderboard[0];
   const completed = governor?.total_completed_trades ?? 0;
-  const required = governor?.required_completed_trades_per_market ?? 20;
-  const best = Math.max(0, ...symbols.map(([, value]) => value.completed_trades ?? 0));
-  const bestSymbol = symbols.sort((a, b) => (b[1].completed_trades ?? 0) - (a[1].completed_trades ?? 0))[0]?.[0];
-  const passed = Boolean(governor?.forward_oos_confirmation_passed);
-  const rejected = Boolean(governor?.terminal_rejection);
-  const openReturn = paper?.portfolio?.return ?? 0;
-  const age = runtime?.server_received_at || runtime?.updated_at ? Math.max(0, Math.floor((now - new Date(runtime?.server_received_at ?? runtime?.updated_at ?? "").getTime()) / 1000)) : Infinity;
+  const activeStrategies = runtime?.factor_model_tournament?.active_models ?? leaderboard.length;
+  const virtualReturn = paper?.portfolio?.return;
   const sourcesOk = runtime?.source_status?.bybit === "CONNECTED" && runtime?.source_status?.binance === "CONNECTED";
-  const systemOk = age < 90 && sourcesOk && runtime?.watchdog_status === "HEALTHY" && runtime?.full_system_audit?.status === "PASS";
-  const noCandidate = active === 0;
-  const quarantined = Math.max(runtime?.research_quality_reset?.quarantined_models ?? 0, runtime?.factor_model_tournament?.archived_models ?? 0);
-  const decision = passed ? "Готов к отдельному решению о запуске" : noCandidate ? "Идёт новый поиск после проверки качества" : rejected ? "Кандидат отклонён" : "Торговать пока нельзя";
-  const stage = passed ? "Проверка завершена" : noCandidate ? "Новых кандидатов пока нет" : completed === 0 ? "Собираем первые завершённые сделки" : `Собрано ${completed} завершённых сделок`;
-  const lifecycle = runtime?.research_hypothesis_lifecycle?.stage_counts ?? {};
-  const backends = useMemo(() => Object.entries(runtime?.research_compatibility_backends ?? {}).filter(([, value]) => value.available_in_controller_environment), [runtime]);
-  const rejectionLabels: Record<string, string> = { NEGATIVE_EXACT_TRAIN_EXECUTION_REPLAY: "убыточны при точном исполнении", EXACT_TRAIN_REPLAY_FEWER_THAN_2_POSITIVE_SYMBOLS: "слишком узкий результат", FEWER_THAN_4_POSITIVE_VALIDATION_SYMBOLS: "не подтвердились на нужном числе рынков", NON_POSITIVE_COST_AWARE_RETURN: "не пережили расходы", FEWER_THAN_18_COST_AWARE_TRADES: "недостаточно сделок", PARAMETER_PLATEAU_FAILED: "нестабильны к соседним параметрам", SELECTION_BIAS_AUDIT_FAILED: "не прошли защиту от переобучения" };
-  const squeeze = runtime?.research_family_incubators?.vol_squeeze_breakout;
+  const live = runtime?.mode === "LIVE" && runtime?.execution_network_available === true;
+  const ready = governor?.forward_oos_confirmation_passed === true;
+  const stopped = governor?.terminal_rejection === true;
+  const age = runtime?.server_received_at || runtime?.updated_at ? Math.max(0, Math.floor((now - new Date(runtime.server_received_at ?? runtime.updated_at ?? "").getTime()) / 1000)) : null;
+  const healthy = sourcesOk && runtime?.watchdog_status === "HEALTHY" && (age ?? 999) < 180;
+  const mainStatus = !sourcesOk ? { title: "Atlas ждёт данные", tone: "neutral" as Tone } : live ? { title: "Atlas торгует", tone: "positive" as Tone } : ready ? { title: "Atlas завершил проверку", tone: "positive" as Tone } : stopped && activeStrategies === 0 ? { title: "Atlas ищет новую стратегию", tone: "warning" as Tone } : { title: "Atlas учится", tone: "warning" as Tone };
+  const gates = runtime?.trading_gate_audit?.gates ?? [];
+  const milestones = ["MARKET_DATA", "SHADOW_TRADING", "FORWARD_TRADE_EVIDENCE", "PROMOTION_ORACLES", "DEMO_BROKER", "CHAMPION"].map(id => ({ id, label: GATES[id], passed: gates.find(g => g.gate === id)?.status === "PASS", current: runtime?.trading_gate_audit?.current_blocking_gate === id }));
+  const passedStages = milestones.filter(item => item.passed).length;
+  const currentGate = milestones.find(item => item.current) ?? milestones.find(item => !item.passed);
+  const required = governor?.required_completed_trades_per_market ?? 20;
+  const events = [...(runtime?.notification_history ?? []), ...(runtime?.factor_model_tournament?.recent_events ?? [])].filter(event => event.occurred_at).sort((a, b) => new Date(b.occurred_at ?? 0).getTime() - new Date(a.occurred_at ?? 0).getTime());
+  const latestEvent = events[0];
+  const tabs: Array<{ id: Tab; label: string; icon: string }> = [{ id: "home", label: "Главная", icon: "⌂" }, { id: "trading", label: "Торговля", icon: "↗" }, { id: "learning", label: "Обучение", icon: "◫" }, { id: "settings", label: "Настройки", icon: "⚙" }];
 
-  return <main><div className="shell">
-    <header><div><span className="brand">ATLAS</span><h1>Состояние торговой системы</h1></div><div className={`live ${systemOk ? "ok" : "bad"}`}><i />{error ? "Панель не получает данные" : systemOk ? "Система работает" : "Нужна проверка"}</div></header>
+  if (!runtime && !error) return <main className="statePage"><div className="loader" /><h1>Atlas обновляет состояние…</h1><p>Получаем последние данные системы.</p></main>;
+  if (!runtime && error) return <main className="statePage"><div className="stateIcon">!</div><h1>Не удалось обновить данные</h1><p>Проверьте соединение и попробуйте ещё раз.</p></main>;
 
-    <section className="hero">
-      <div className="eyebrow">РЕШЕНИЕ НА ЭТУ МИНУТУ</div>
-      <div className="heroTop"><div><h2>{decision}</h2><p>{passed ? "Кандидат прошёл независимое подтверждение. Реальная торговля всё равно включается только отдельным решением." : noCandidate ? `Прежние кандидаты не подтвердили результат при точном воспроизведении торговли и сняты с проверки (${quarantined}). Фабрика продолжает искать новые идеи.` : "Сейчас система исследует и наблюдает. Реальные ордера технически запрещены."}</p></div><span className={`decision ${passed ? "good" : rejected ? "bad" : "warn"}`}>{passed ? "ГОТОВ К РЕШЕНИЮ" : noCandidate ? "ПОИСК · БЕЗ ОРДЕРОВ" : rejected ? "ОТКЛОНЁН" : "SHADOW · БЕЗ ОРДЕРОВ"}</span></div>
-      <div className="answerGrid">
-        <article><span>Что у нас сейчас</span><strong>{active} кандидатов</strong><small>{stage}</small></article>
-        <article><span>Что выглядит хорошо</span><strong className={noCandidate ? "neutral" : openReturn >= 0 ? "positive" : "negative"}>{noCandidate ? "Контроль стал строже" : pct(openReturn)}</strong><small>{noCandidate ? "Ложные кандидаты больше не занимают ресурсы" : "Открытый результат портфеля, ещё не доказательство"}</small></article>
-        <article><span>Когда можно торговать</span><strong>{noCandidate ? "После нового отбора" : `${best}/${required} сделок`}</strong><small>{passed ? "Независимая проверка пройдена" : noCandidate ? "Сначала кандидат должен обойти простые контрольные стратегии и точный replay" : `Лучший рынок ${bestSymbol ? coin(bestSymbol) : "—"}; затем нужна статистическая прибыль`}</small></article>
-      </div>
-    </section>
+  return <main><div className="appShell">
+    <header className="topbar"><div><span className="brand">ATLAS</span><small>Автономный торговый агент</small></div><Badge status={healthy ? "HEALTHY" : "INSUFFICIENT_EVIDENCE"} label={healthy ? "Система работает" : "Нужна проверка"} /></header>
 
-    {!noCandidate && <section className="card leader">
-      <div className="sectionTitle"><div><span>ТЕКУЩИЙ ЛИДЕР</span><h2>{strategyName(paper?.expression)}</h2></div><b className="rank">№1 из {active || "—"}</b></div>
-      <p>Это лучший кандидат сейчас, но не чемпион. Его преимущество пока предварительное и может измениться по мере новых завершённых сделок.</p>
-      <div className="metrics"><div><span>Открытый результат</span><b className={openReturn >= 0 ? "positive" : "negative"}>{pct(openReturn)}</b></div><div><span>Просадка портфеля</span><b>{pct(paper?.portfolio?.max_drawdown)}</b></div><div><span>Завершённые сделки</span><b>{completed}</b></div><div><span>Изменения позиции</span><b>{governor?.total_transitions ?? 0}</b></div></div>
-      <div className="next"><b>Следующий объективный рубеж</b><span>{passed ? "Проверка пройдена — требуется отдельное решение владельца о запуске." : `Накопить минимум ${required} завершённых сделок на одном заранее выбранном рынке. Сейчас максимум ${best}. После этого нижняя 95%-граница средней сделки должна стать выше нуля. Явно отрицательная модель может быть остановлена уже после ${governor?.early_rejection_min_trades ?? 8} сделок; высокая уверенность начинается с ${governor?.high_confidence_trades ?? 50}.`}</span></div>
-      {runtime?.factor_model_tournament?.stagnation?.status !== "PROGRESSING" && <div className="alert"><b>Обнаружено узкое место</b><span>{runtime?.factor_model_tournament?.stagnation?.status === "STALLED_EXIT_COLLECTION" ? "Позиции менялись, но завершённые сделки не накапливались. Теперь параллельно учитываются выход по нормализации, пересечению нуля и максимальному времени удержания." : "Сигналы слишком редкие — система проверяет пороги входа и доступность факторов."}</span></div>}
-    </section>}
+    {error && <div className="errorBanner" role="alert">Не удалось получить свежее обновление. Показаны последние доступные данные.</div>}
 
-    {noCandidate && <section className="card leader"><div className="sectionTitle"><div><span>ПЕРЕЗАПУСК КАЧЕСТВА</span><h2>Слабые модели убраны, история сохранена</h2></div><b className="rank">{quarantined} в карантине</b></div><p>Новая модель попадёт в SHADOW только если её точная торговая логика остаётся положительной после расходов, она обходит простые контрольные стратегии и выдерживает независимую проверку. Это временно уменьшает количество кандидатов, но повышает смысл каждого из них.</p></section>}
+    {tab === "home" && <div className="page homePage">
+      <section className={`statusCard ${mainStatus.tone}`}><div><span className="eyebrow">ТЕКУЩИЙ СТАТУС</span><h1>{mainStatus.title}</h1><p>{live ? "Реальная торговля активна" : "Реальные ордера отключены. Atlas торгует только виртуально."}</p></div><span className="statusMark" aria-hidden="true">{live || ready ? "✓" : "●"}</span></section>
 
-    {squeeze && <section className="card leader"><div className="sectionTitle"><div><span>ПЕРСПЕКТИВНЫЙ ИНКУБАТОР</span><h2>Пробой после сжатия волатильности</h2></div><b className="rank">ещё не кандидат</b></div><p>Лучший вариант использует выход {squeeze.best_exit_mode ?? "—"}. Validation: {pct(squeeze.best_validation_return)}, {count(squeeze.best_validation_trades)} сделок. При двойных расходах: {pct(squeeze.cost_sensitivity?.returns?.["2x"])}. {squeeze.specialist_route?.status === "PASSED" ? `Заранее выбранный рынок ${coin(squeeze.specialist_route.symbol ?? "")} подтвердил плюс, но статистических доказательств пока недостаточно.` : "Маршрут отдельного рынка пока не подтверждён."}</p></section>}
+      <section className="performance"><div><span className="eyebrow">РЕЗУЛЬТАТ ВИРТУАЛЬНОЙ ТОРГОВЛИ</span><strong className={(virtualReturn ?? 0) >= 0 ? "positive" : "negative"}>{pct(virtualReturn)}</strong></div><div className="miniGrid"><Metric label="Завершено" value={`${number(completed)} сделок`} /><Metric label="Открыто сейчас" value={`${number(positions.length)} позиции`} /></div></section>
 
-    <section className="card tournament">
-      <div className="sectionTitle"><div><span>ТУРНИР</span><h2>Все кандидаты продолжают проверку параллельно</h2></div></div>
-      <p>Новый кандидат может появиться, пока текущие тестируются. Лидер меняется автоматически только по фактическому результату и риску.</p>
-      <div className="leaderboard"><div className="tableHead"><span>Место / стратегия</span><span>Портфель</span><span>Просадка</span><span>Доказательства</span></div>{leaderboard.map((item, index) => <div className="tableRow" key={item.model_id ?? index}><div><b>{index + 1}. {strategyName(item.expression)}</b><small>{item.model_id === runtime?.factor_model_tournament?.leader_model_id ? "Временный лидер" : item.terminal_rejection ? "Отклонён" : "Продолжает наблюдение"}</small></div><strong className={(item.portfolio_return ?? item.median_return ?? 0) >= 0 ? "positive" : "negative"}>{pct(item.portfolio_return ?? item.median_return)}</strong><span>{pct(item.portfolio_max_drawdown ?? item.maximum_drawdown)}</span><span>{item.completed_trades ?? 0} сделок · {item.decision_state === "PROMISING" ? "перспективен" : item.decision_state === "REJECTED" ? "отклонён" : item.decision_state === "ACCEPTED_CHAMPION_CANDIDATE" ? "готов к решению" : "сбор данных"}</span></div>)}</div>
-      {(runtime?.factor_model_tournament?.recent_events?.length ?? 0) > 0 && <div className="events"><b>Последние события</b>{runtime?.factor_model_tournament?.recent_events?.slice(0, 3).map((event, index) => <div key={`${event.occurred_at}-${index}`}><span>{event.message}</span><small>{event.occurred_at ? new Date(event.occurred_at).toLocaleString("ru-RU") : "—"}</small></div>)}</div>}
-    </section>
+      <section className="section"><div className="sectionHead"><div><span className="eyebrow">ГОТОВНОСТЬ</span><h2>Путь к реальной торговле</h2></div><b>{passedStages} из {milestones.length}</b></div><div className="progress" aria-label={`Пройдено ${passedStages} из ${milestones.length} этапов`}><span style={{ width: `${passedStages / milestones.length * 100}%` }} /></div><div className="milestones">{milestones.map(item => <div className={item.passed ? "done" : item.current ? "current" : ""} key={item.id}><i>{item.passed ? "✓" : item.current ? "●" : "○"}</i><span>{item.label}</span></div>)}</div></section>
 
-    <details className="card"><summary><span><em>РЫНКИ</em><b>Открытые позиции и промежуточный результат</b></span><i>Показать</i></summary><p className="note">Процент ниже — текущая переоценка открытой или наблюдаемой позиции. Ноль завершённых сделок означает, что статистического вывода ещё нет.</p><div className="marketTable">{symbols.map(([symbol, value]) => <div className="marketRow" key={symbol}><b>{coin(symbol)}</b><span>{position(value.position)}</span><strong className={(value.return ?? 0) > 0 ? "positive" : (value.return ?? 0) < 0 ? "negative" : "neutral"}>{pct(value.return)}</strong><span>{value.completed_trades ?? 0} завершённых</span></div>)}</div></details>
+      <section className="section activity"><span className="eyebrow">ЧТО ПРОИСХОДИТ СЕЙЧАС</span><h2>{activeStrategies ? `Atlas тестирует ${number(activeStrategies)} ${activeStrategies === 1 ? "стратегию" : "стратегии"}` : "Atlas ищет новые торговые идеи"}</h2><div className="activityGrid"><Metric label="Рынки" value={number(symbols.length)} hint="под наблюдением" /><Metric label="Виртуальные позиции" value={number(positions.length)} hint="реальные ордера не отправляются" /></div><div className="nextStep"><i>→</i><div><b>Следующий этап</b><p>{currentGate ? currentGate.label : "Отдельное решение о запуске"}. {completed < required ? `Текущий ориентир — ${required} завершённых сделок на нескольких рынках.` : "Atlas проверяет устойчивость результата и риск."}</p></div></div></section>
 
-    <details className="card"><summary><span><em>КАК РАБОТАЕТ ЛИДЕР</em><b>Понятное правило и точная формула</b></span><i>Показать</i></summary><p className="plain">{strategyExplanation(paper?.expression)}</p><code className="formula">{paper?.expression ?? "—"}</code><p className="note">Сигнал проверяется каждые {paper?.execution_profile?.rebalance_bars ?? "—"} свечей. В SHADOW учитываются торговые расходы; позиции ограничены значениями −1, 0 и +1.</p></details>
+      <section className="section"><div className="sectionHead"><div><span className="eyebrow">ПОЗИЦИИ</span><h2>Открытые позиции</h2></div>{positions.length > 0 && <button onClick={() => setTab("trading")}>Все позиции</button>}</div>{positions.length === 0 ? <p className="empty">Сейчас открытых позиций нет.</p> : <div className="positionPreview">{positions.slice(0, 2).map(([symbol, item]) => <PositionCard key={symbol} symbol={symbol} item={item} />)}</div>}</section>
 
-    <details className="card"><summary><span><em>ФАБРИКА СТРАТЕГИЙ</em><b>Откуда берутся идеи и куда уходят слабые</b></span><i>Показать</i></summary><div className="funnel"><div><b>{count(runtime?.research_hypothesis_lifecycle?.tracked)}</b><span>идей сохранено</span></div><div><b>{count(lifecycle.FILTERED_BEFORE_EXPENSIVE_VALIDATION)}</b><span>отсечено рано</span></div><div><b>{count(lifecycle.SHADOW_PAPER_FORWARD_OOS)}</b><span>дошли до SHADOW</span></div><div><b>{count(lifecycle.ACCEPTED_FOR_STRATEGY_FACTORY)}</b><span>принято окончательно</span></div></div><p className="note">Идеи не исчезают: дубликаты объединяются, слабые семейства временно останавливаются, а перспективные проходят дорогую проверку. Сейчас в cooldown: {count(runtime?.research_factor_memory?.cooling_down)} семейств.</p>{runtime?.research_rejection_analysis && <div className="next"><b>Почему закончился последний отбор</b><span>Проверено финалистов: {count(runtime.research_rejection_analysis.evaluated_finalists)}. Главная причина: {rejectionLabels[runtime.research_rejection_analysis.dominant_reason ?? ""] ?? "отбор ещё не завершён"}. Следующий цикл автоматически меняет направление поиска согласно найденному узкому месту.</span></div>}<div className="chips">{backends.map(([key, value]) => <span key={key}>{value.project ?? key}</span>)}</div></details>
+      <section className="section leader"><div className="sectionHead"><div><span className="eyebrow">ЛУЧШАЯ СТРАТЕГИЯ СЕЙЧАС</span><h2>{strategyName(leader?.expression ?? paper?.expression)}</h2></div>{leader && <span className="leaderTag">Лидер тестирования</span>}</div>{leader ? <><div className="leaderMetrics"><strong className={(leader.portfolio_return ?? virtualReturn ?? 0) >= 0 ? "positive" : "negative"}>{pct(leader.portfolio_return ?? virtualReturn)}</strong><span>{number(leader.completed_trades ?? completed)} сделок</span><span>Макс. просадка {dd(leader.portfolio_max_drawdown ?? paper?.portfolio?.max_drawdown)}</span></div><p className="note">Это предварительный результат. Лидер может измениться после новых сделок.</p><Technical><p>Модель: {leader.model_id ?? paper?.model_id ?? "—"}</p><p>Формула: <code>{leader.expression ?? paper?.expression ?? "—"}</code></p><p>Internal state: {leader.decision_state ?? governor?.decision_state ?? "—"}</p></Technical></> : <p className="empty">Пока недостаточно данных для выбора лидера.</p>}</section>
 
-    <details className="card"><summary><span><em>ТЕХНИЧЕСКОЕ СОСТОЯНИЕ</em><b>Источники, контроль и независимый replay</b></span><i>Показать</i></summary><div className="health"><div><span>Данные</span><b className={sourcesOk ? "positive" : "negative"}>{sourcesOk ? "Bybit и Binance подключены" : "Проблема соединения"}</b></div><div><span>Контроль</span><b>{runtime?.watchdog_status ?? "—"}</b></div><div><span>Полный аудит</span><b>{runtime?.full_system_audit?.status ?? "—"}</b></div><div><span>Replay</span><b>Nautilus {runtime?.nautilus_replay_status ?? "—"} · Freqtrade {runtime?.freqtrade_replay_status ?? "—"}</b></div></div></details>
+      <section className="section"><span className="eyebrow">РИСК</span><h2>Контроль риска</h2><div className="riskGrid"><Metric label="Максимальная просадка" value={dd(paper?.portfolio?.max_drawdown)} tone="negative" /><Metric label="Риск одной сделки" value={runtime?.risk_per_trade_fraction == null ? "—" : pct(runtime.risk_per_trade_fraction)} /><Metric label="Виртуальный капитал" value={`${Number(runtime?.modeled_capital_usdt ?? 0).toFixed(2)} USDT`} /></div></section>
 
-    <details className="card"><summary><span><em>ИСТОРИЯ УВЕДОМЛЕНИЙ</em><b>Важные изменения и движение к торговле</b></span><i>Показать</i></summary><p className="note">Сохраняются предупреждения и положительные этапы. Новые события находятся сверху; локально хранится до 500 записей, последние 50 доступны здесь.</p><div className="history">{(runtime?.notification_history?.length ?? 0) === 0 ? <span className="empty">Новых событий после включения журнала пока нет.</span> : runtime?.notification_history?.slice().reverse().map((event, index) => <article key={`${event.occurred_at}-${index}`}><div><b>{event.title ?? "Событие Atlas"}</b><small>{event.category === "PROGRESS" ? "Прогресс" : "Состояние системы"}</small></div><p>{event.message}</p><time>{event.occurred_at ? new Date(event.occurred_at).toLocaleString("ru-RU") : "—"}</time></article>)}</div></details>
+      <section className="section eventCard"><span className="eyebrow">ПОСЛЕДНЕЕ ВАЖНОЕ СОБЫТИЕ</span>{latestEvent ? <div><time>{new Date(latestEvent.occurred_at ?? "").toLocaleString("ru-RU", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</time><p>{latestEvent.message ?? latestEvent.title ?? "Состояние Atlas обновилось."}</p></div> : <p className="empty">Новых важных событий пока нет.</p>}</section>
+    </div>}
 
-    <footer>Обновлено {Number.isFinite(age) ? `${age} сек. назад` : "—"} · Панель только читает состояние и не может отправлять ордера</footer>
+    {tab === "trading" && <div className="page"><div className="pageTitle"><span className="eyebrow">ТОРГОВЛЯ</span><h1>Виртуальные сделки</h1><p>Здесь показана симуляция. Реальные деньги не используются.</p></div><div className="modeNotice"><b>Виртуальный режим</b><span>Реальные ордера не отправляются</span></div><section className="tradeSummary"><Metric label="Общий результат" value={pct(virtualReturn)} tone={(virtualReturn ?? 0) >= 0 ? "positive" : "negative"} /><Metric label="Завершённые сделки" value={number(completed)} /><Metric label="Открытые позиции" value={number(positions.length)} /></section><section className="section"><h2>Открытые позиции</h2>{positions.length === 0 ? <p className="empty">Сейчас открытых позиций нет.</p> : <div className="positionsList">{positions.map(([symbol, item]) => <PositionCard key={symbol} symbol={symbol} item={item} />)}</div>}</section><section className="section"><h2>Результаты по рынкам</h2><div className="marketList">{symbols.length === 0 ? <p className="empty">Данные о рынках пока не получены.</p> : symbols.map(([symbol, item]) => <article key={symbol}><div><b>{coin(symbol)}</b><small>{number(item.completed_trades)} завершённых сделок</small></div><strong className={(item.return ?? 0) >= 0 ? "positive" : "negative"}>{pct(item.return)}</strong><Badge status={item.market_audit?.status} /></article>)}</div></section></div>}
+
+    {tab === "learning" && <div className="page"><div className="pageTitle"><span className="eyebrow">ОБУЧЕНИЕ</span><h1>Как Atlas выбирает стратегию</h1><p>Atlas одновременно проверяет несколько торговых подходов и постепенно отбрасывает слабые.</p></div><section className="section"><h2>Этапы обучения</h2><div className="pipeline">{["Данные", "Идея", "Проверка", "Симуляция", "Статистика", "Готовность"].map((label, index) => <div className={index < passedStages ? "done" : index === passedStages ? "current" : ""} key={label}><i>{index < passedStages ? "✓" : index === passedStages ? "●" : index + 1}</i><span><b>{label}</b><small>{index < passedStages ? "Завершено" : index === passedStages ? "Текущий этап" : "Впереди"}</small></span></div>)}</div></section><section className="section"><div className="sectionHead"><div><span className="eyebrow">КАНДИДАТЫ</span><h2>Сравнение стратегий</h2></div><span>{number(leaderboard.length)} в рейтинге</span></div>{leaderboard.length === 0 ? <p className="empty">Atlas пока не запустил тестирование новых стратегий.</p> : <div className="candidateList">{leaderboard.map((item, index) => <article key={item.model_id ?? index}><div className="candidateTop"><div><span className="rank">{index + 1}</span><div><h3>{strategyName(item.expression)}</h3><Badge status={item.status ?? item.decision_state} label={index === 0 ? "Лидер тестирования" : undefined} /></div></div><strong className={(item.portfolio_return ?? 0) >= 0 ? "positive" : "negative"}>{pct(item.portfolio_return)}</strong></div><div className="candidateMetrics"><span>{number(item.completed_trades)} сделок</span><span>Просадка {dd(item.portfolio_max_drawdown)}</span></div><Technical><p>Model ID: {item.model_id ?? "—"}</p><p>Internal state: {item.status ?? item.decision_state ?? "—"}</p><p>Expression: <code>{item.expression ?? "—"}</code></p></Technical></article>)}</div>}</section><section className="section"><div className="sectionHead"><div><span className="eyebrow">КАЧЕСТВО ДАННЫХ</span><h2>{runtime?.data_acceptance?.official_observation_ready ? "Данные готовы" : "Atlas продолжает сбор"}</h2></div><b>{number(runtime?.data_acceptance?.accepted_day_count)} из {number(runtime?.data_acceptance?.required_accepted_days)} дней</b></div><div className="dayList">{Object.entries(runtime?.data_acceptance?.day_status ?? {}).sort(([a], [b]) => b.localeCompare(a)).map(([date, item]) => <article key={date}><time>{new Date(`${date}T00:00:00`).toLocaleDateString("ru-RU", { day: "2-digit", month: "short" })}</time><div><b>{item.status === "ACCEPTED" ? "Принято" : "Пока не принято"}</b><small>{item.metrics?.valid_coverage_ratio == null ? (item.reasons ?? []).map(reason => REASONS[reason] ?? "Требуется больше данных").join(" · ") : `${(item.metrics.valid_coverage_ratio * 100).toFixed(1)}% покрытия`}</small></div></article>)}</div><Technical><p>Accepted windows: {number(runtime?.data_acceptance?.accepted_valid_5m_windows)} / {number(runtime?.data_acceptance?.required_valid_5m_windows)}</p><p>Internal state: {runtime?.data_acceptance?.status ?? "—"}</p></Technical></section><section className="section"><h2>Независимые проверки</h2><div className="checks"><Metric label="Сигналы" value={runtime?.microstructure_model_validation?.signal_parity ?? "Не завершено"} /><Metric label="Стабильность данных" value={runtime?.microstructure_model_validation?.drift ?? "Не завершено"} /><Metric label="Исполнение L2" value={runtime?.microstructure_model_validation?.l2_execution ?? "Не завершено"} /><Metric label="Nautilus" value={runtime?.microstructure_model_validation?.nautilus_differential ?? "Не завершено"} /></div><Technical><p>Nautilus replay: {runtime?.nautilus_replay_status ?? "—"}</p><p>Freqtrade replay: {runtime?.freqtrade_replay_status ?? "—"}</p><p>Scalp status: {runtime?.scalp_shadow?.status ?? "—"}; blockers: {(runtime?.scalp_shadow?.promotion_blockers ?? []).join(", ") || "—"}</p><p>Отклонено скальпинговых схем: {number(runtime?.scalp_admission?.rejected_lane_ids?.length)}</p></Technical></section></div>}
+
+    {tab === "settings" && <div className="page"><div className="pageTitle"><span className="eyebrow">НАСТРОЙКИ</span><h1>Режим и безопасность</h1><p>Фактические ограничения Atlas. Изменение торговых правил из этой панели недоступно.</p></div><section className="section settingsHero"><div><span>Текущий режим</span><h2>{live ? "Реальная торговля" : "Виртуальная торговля"}</h2><p>{live ? "Atlas может отправлять реальные ордера." : "Atlas анализирует рынки и моделирует сделки без использования реальных денег."}</p></div><Badge status={live ? "ACTIVE" : "COLLECTING_DATA"} label={live ? "LIVE" : "Виртуально"} /></section><section className="section settingsList"><div><span>Биржа</span><b>{sourcesOk ? "Bybit и Binance подключены" : "Биржа не подключена"}</b></div><div><span>Реальные ордера</span><b className={live ? "positive" : "neutral"}>{live ? "Разрешены" : "Отключены"}</b></div><div><span>Виртуальный капитал</span><b>{Number(runtime?.modeled_capital_usdt ?? 0).toFixed(2)} USDT</b></div><div><span>Риск одной сделки</span><b>{runtime?.risk_per_trade_fraction == null ? "Не опубликован" : pct(runtime.risk_per_trade_fraction)}</b></div><div><span>Контроль системы</span><b>{humanStatus(runtime?.watchdog_status).label}</b></div></section><section className="section"><h2>Диагностика</h2><p className="note">Технические данные нужны для проверки системы и не влияют на торговые решения.</p><Technical><p>Mode: {runtime?.mode ?? "—"}</p><p>Watchdog: {runtime?.watchdog_status ?? "—"}</p><p>Bybit: {runtime?.source_status?.bybit ?? "—"}; Binance: {runtime?.source_status?.binance ?? "—"}</p><p>Execution network: {String(runtime?.execution_network_available ?? false)}</p><p>Demo broker: {runtime?.full_system_audit?.demo_broker_status ?? "—"}</p><p>Current gate: {runtime?.trading_gate_audit?.current_blocking_gate ?? "—"}</p></Technical></section></div>}
+
+    <footer className="updated">Обновлено {age == null ? "—" : age < 5 ? "только что" : `${age} сек. назад`}</footer>
+    <nav className="bottomNav" aria-label="Основная навигация">{tabs.map(item => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => { setTab(item.id); window.scrollTo({ top: 0, behavior: "smooth" }); }} aria-current={tab === item.id ? "page" : undefined}><i aria-hidden="true">{item.icon}</i><span>{item.label}</span></button>)}</nav>
   </div></main>;
 }

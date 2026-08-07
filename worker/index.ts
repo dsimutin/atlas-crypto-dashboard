@@ -6,18 +6,20 @@ interface WorkerEnv extends Env {
   RUNTIME_SYNC_TOKEN: string;
 }
 
-const DASHBOARD_BUILD_ID = "2026.08.05-16";
+const DASHBOARD_BUILD_ID = "2026.08.07-02";
 const MAX_RUNTIME_PAYLOAD_BYTES = 65_536;
 
 const runtimeFields = new Set([
   "updated_at", "first_observation_at", "last_full_cycle_at", "last_decision_status",
   "last_decision_reasons", "mode", "bybit_messages", "binance_messages",
   "last_assessment_status", "last_technical_reasons", "warmup_active",
+  "last_market_context",
   "observed_symbols",
   "assessment_cycles", "strategy_cycles", "virtual_actions", "completed_cycles",
   "warmup_cycles", "protective_veto_cycles", "no_signal_cycles", "cost_blocked_cycles",
   "technical_block_cycles", "oos_excluded_overlaps", "pending_virtual_observations",
-  "challenger_registered", "challenger_evaluations", "challenger_signals",
+  "challenger_registered", "challenger_registered_total", "challenger_terminal_rejected",
+  "challenger_evaluations", "challenger_signals",
   "challenger_conflicts", "challenger_execution_allowed",
   "cross_sectional_selected", "cross_sectional_rejections",
   "cross_sectional_execution_allowed",
@@ -35,6 +37,7 @@ const runtimeFields = new Set([
   "research_lab_viable_candidates",
   "research_external_audit_status", "research_generated_hypotheses",
   "research_accepted_hypotheses", "research_shadow_paper_eligible",
+  "research_candidate_routes",
   "research_candidate_funnel", "research_data_schema_audit",
   "ccxt_market_audit_status", "ccxt_market_audit_generated_at", "ccxt_market_audit_symbols",
   "freqtrade_replay_status", "freqtrade_replay_generated_at",
@@ -43,6 +46,7 @@ const runtimeFields = new Set([
   "nautilus_replay_status", "nautilus_replay_generated_at",
   "nautilus_replay_source_events", "nautilus_replay_instruments",
   "nautilus_replay_engine_summary",
+  "microstructure_model_validation",
   "research_compatibility_protocol", "research_compatibility_updated_at",
   "research_compatibility_backends", "research_external_proposals",
   "research_external_rejections",
@@ -50,7 +54,12 @@ const runtimeFields = new Set([
   "research_feedback_accepted", "research_feedback_rejected", "research_feedback_results",
   "research_factor_memory", "research_strategy_memory",
   "research_hypothesis_lifecycle", "research_generator_performance",
+  "research_mechanism_programs",
+  "research_funding_oi_basis_study",
+  "research_mechanism_lifecycle",
+  "research_agent_context_forward",
   "factor_model_paper", "factor_model_tournament", "model_winner_notification",
+  "trading_gate_audit", "champion_governance",
   "startup_reconciliation_status", "startup_reconciliation_checked_at",
   "startup_open_orders", "startup_open_positions", "startup_external_orders",
   "startup_unprotected_positions", "startup_position_symbols",
@@ -59,7 +68,7 @@ const runtimeFields = new Set([
   "modeled_capital_usdt", "risk_per_trade_fraction", "risk_budget_usdt",
   "execution_network_available", "source_status", "source_reconnects", "source_errors",
   "source_reconnects_last_hour", "storage_health",
-  "binance_queue_depth", "binance_queue_drops",
+  "binance_queue_depth", "binance_queue_capacity", "binance_queue_drops", "binance_queue_drop_events",
   "archive_status",
   "watchdog_status", "watchdog_checked_at", "watchdog_reasons",
   "notification_history",
@@ -79,6 +88,7 @@ const runtimeFields = new Set([
   "microstructure_samples", "microstructure_first_sample_at", "counterfactual_cycles",
   "counterfactual_gate_audit", "strategy_robustness",
   "full_system_audit", "data_acceptance",
+  "cryptofeed_sidecar",
 ]);
 
 function jsonResponse(value: unknown, status = 200): Response {
@@ -223,7 +233,21 @@ const worker = {
       }, allowedWidths);
     }
 
-    return handler.fetch(request, env, ctx);
+    const response = await handler.fetch(request, env, ctx);
+    // The root document contains the hashed client-asset manifest. Serving an
+    // old cached index after a deploy leaves browsers requesting an obsolete
+    // bundle, even though the Worker and API are current.
+    if (url.pathname === "/" || url.pathname === "/index.html") {
+      const headers = new Headers(response.headers);
+      headers.set("Cache-Control", "no-store, max-age=0");
+      headers.set("CDN-Cache-Control", "no-store");
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      });
+    }
+    return response;
   },
 };
 

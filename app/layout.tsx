@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://atlas-crypto-dashboard.atlas-crypto-dima.workers.dev/"),
-  title: "Atlas — кандидат и состояние системы",
-  description: "Понятный статус Atlas: работает ли система, как торгует кандидат и может ли он стать чемпионом.",
+  title: "Atlas — автономный торговый агент",
+  description: "Понятное состояние Atlas: результат, готовность, виртуальные позиции и контроль риска.",
   manifest: "/site.webmanifest",
   appleWebApp: {
     capable: true,
@@ -28,8 +28,15 @@ export const metadata: Metadata = {
     apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
   openGraph: {
-    title: "Atlas — кандидат и состояние системы",
-    description: "Работает ли система, как торгует кандидат и может ли он стать чемпионом.",
+    title: "Atlas — автономный торговый агент",
+    description: "Результат, готовность, виртуальные позиции и контроль риска.",
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "ATLAS — автономный торговый агент" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Atlas — автономный торговый агент",
+    description: "Результат, готовность, виртуальные позиции и контроль риска.",
+    images: ["/og.png"],
   },
 };
 
