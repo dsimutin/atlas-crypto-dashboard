@@ -6,7 +6,7 @@ interface WorkerEnv extends Env {
   RUNTIME_SYNC_TOKEN: string;
 }
 
-const DASHBOARD_BUILD_ID = "2026.08.07-02";
+const DASHBOARD_BUILD_ID = "2026.08.09-profit-evidence-01";
 const MAX_RUNTIME_PAYLOAD_BYTES = 65_536;
 
 const runtimeFields = new Set([
@@ -57,6 +57,9 @@ const runtimeFields = new Set([
   "research_mechanism_programs",
   "research_funding_oi_basis_study",
   "research_mechanism_lifecycle",
+  "research_mechanism_forward_factory",
+  "research_mechanism_versions",
+  "research_competitive_interaction_audit",
   "research_agent_context_forward",
   "factor_model_paper", "factor_model_tournament", "model_winner_notification",
   "trading_gate_audit", "champion_governance",
