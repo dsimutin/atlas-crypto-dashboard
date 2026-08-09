@@ -81,9 +81,36 @@ test("renders operational health and lifecycle telemetry without enabling execut
     assert.match(worker, new RegExp(`"${field}"`));
   }
   assert.match(source, /КОМПЬЮТЕР И КАНАЛЫ ДАННЫХ/);
+  const home = source.slice(source.indexOf('{tab === "home"'), source.indexOf('{tab === "trading"'));
+  const settings = source.slice(source.indexOf('{tab === "settings"'));
+  assert.doesNotMatch(home, /CPU наблюдателя|Пиковая RAM|Свободно на диске/);
+  assert.match(settings, /Использование Mac/);
+  assert.match(settings, /CPU наблюдателя/);
   assert.match(source, /ИСТОРИЯ СЛУЖБЫ/);
   assert.match(source, /Данные устарели/);
   assert.doesNotMatch(source, /execution_network_available:\s*true/);
+});
+
+test("keeps the home page focused on profit evidence and next action", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const home = source.slice(source.indexOf('{tab === "home"'), source.indexOf('{tab === "trading"'));
+  for (const label of ["ГЛАВНЫЙ ОРИЕНТИР", "Портфель кандидатов к торговле", "Моделей в текущем портфеле", "Доказательство портфеля", "Предварительно прибыльных", "Подтверждённых", "ЧТО ПРОИСХОДИТ", "ЧЕГО ЖДЁМ"]) {
+    assert.match(home, new RegExp(label));
+  }
+  assert.match(home, /общая прибыль текущего допущенного состава после комиссий/);
+  assert.match(home, /не включены убыточные исследовательские модели/);
+  assert.match(home, /Рейтинг отдельной модели и допуск в общий портфель — разные проверки/);
+  assert.doesNotMatch(home, /Load 1m|Storage sample|фактическая телеметрия выбранной биржи/i);
+});
+
+test("explains which trading metric the owner should use", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const trading = source.slice(source.indexOf('{tab === "trading"'), source.indexOf('{tab === "learning"'));
+  assert.match(trading, /Сделки ведущей модели/);
+  assert.match(trading, /На что смотреть/);
+  assert.match(trading, /итог закрытых сделок ведущей модели/);
+  assert.match(trading, /временные и не являются итоговой прибылью/);
+  assert.doesNotMatch(trading, /label="Общий результат"/);
 });
 
 test("includes loading, error and empty states", async () => {
