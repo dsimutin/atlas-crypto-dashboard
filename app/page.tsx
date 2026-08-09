@@ -20,10 +20,17 @@ type Leader = {
   specialist_target_symbol?: string; forward_oos_confirmation_passed?: boolean;
 };
 type Event = { occurred_at?: string; category?: string; type?: string; title?: string; message?: string; model_id?: string; previous_model_id?: string; display_name?: string; previous_display_name?: string };
+type RuntimeLifecycleEvent = { occurred_at?: string; type?: string; reason?: string; session_id?: string; pid?: number; planned?: boolean };
 type Runtime = {
   updated_at?: string; server_received_at?: string; mode?: string; watchdog_status?: string;
-  modeled_capital_usdt?: string; risk_per_trade_fraction?: number; risk_budget_usdt?: string;
+  modeled_capital_usdt?: string; risk_per_trade_fraction?: number | string; risk_budget_usdt?: string;
   source_status?: Record<string, string>; execution_network_available?: boolean;
+  source_last_message_at?: Record<string, string | null>;
+  runtime_health?: { sampled_at?: string; process_cpu_percent?: number; process_max_rss_bytes?: number; system_cpu_count?: number; system_load_1m?: number; system_load_ratio_1m?: number; uptime_seconds?: number; sources?: Record<string, { status?: string; last_message_at?: string | null; last_message_age_seconds?: number | null; reconnects_last_hour?: number }> };
+  runtime_lifecycle?: { current_session?: { session_id?: string; pid?: number; status?: string; started_at?: string; start_reason?: string }; counters?: { starts?: number; planned_restarts?: number; unexpected_terminations?: number; orderly_stops?: number }; events?: RuntimeLifecycleEvent[] };
+  storage_health?: { checked_at?: string; total_bytes?: number; free_bytes?: number; free_percent?: number; project_data_bytes?: number; bytes_by_area?: Record<string, number>; growth_bytes_per_day?: number | null; growth_sample_hours?: number | null; estimated_days_until_full?: number | null; warning?: boolean; critical?: boolean };
+  dashboard_sync_status?: string; dashboard_sync_last_success_at?: string | null; dashboard_sync_error?: string | null;
+  progress_write_interval_seconds?: number;
   demo_open_orders?: number; demo_open_positions?: number; demo_orders_total?: number;
   full_system_audit?: { status?: string; public_observation_status?: string; demo_broker_status?: string };
   trading_gate_audit?: { status?: string; current_blocking_gate?: string | null; demo_eligible_markets?: string[]; gates?: Array<{ gate?: string; status?: string; reason?: string | null }> };
@@ -81,9 +88,29 @@ const REASONS: Record<string, string> = {
   INSUFFICIENT_SAMPLES: "Недостаточно наблюдений", INSUFFICIENT_COVERAGE: "Недостаточное покрытие данных",
   INSUFFICIENT_SYMBOLS: "Недостаточно рынков", prescreen_economics: "Результат не покрывает торговые расходы",
 };
-const pct = (value?: number | null) => value == null || !Number.isFinite(value) ? "—" : `${value >= 0 ? "+" : "−"}${(Math.abs(value) * 100).toFixed(2)}%`;
+const pct = (value?: number | string | null) => {
+  const numeric = Number(value);
+  return value == null || !Number.isFinite(numeric)
+    ? "—"
+    : `${numeric >= 0 ? "+" : "−"}${(Math.abs(numeric) * 100).toFixed(2)}%`;
+};
 const dd = (value?: number | null) => value == null ? "—" : `−${(Math.abs(value) * 100).toFixed(2)}%`;
 const number = (value?: number) => (value ?? 0).toLocaleString("ru-RU");
+const bytes = (value?: number | null) => {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const units = ["Б", "КБ", "МБ", "ГБ", "ТБ"];
+  let amount = Math.max(0, value);
+  let unit = 0;
+  while (amount >= 1024 && unit < units.length - 1) { amount /= 1024; unit += 1; }
+  return `${amount.toLocaleString("ru-RU", { maximumFractionDigits: amount >= 100 ? 0 : 1 })} ${units[unit]}`;
+};
+const duration = (seconds?: number | null) => {
+  if (seconds == null) return "—";
+  if (seconds < 60) return `${seconds} сек`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} мин`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} ч ${Math.floor(seconds % 3600 / 60)} мин`;
+  return `${Math.floor(seconds / 86400)} д ${Math.floor(seconds % 86400 / 3600)} ч`;
+};
 const money = (value?: string | number | null) => value == null || !Number.isFinite(Number(value)) ? "—" : `${Number(value).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 4 })} USDT`;
 const coin = (value: string) => value.replace("USDT", "");
 const price = (value?: number | null) => value == null ? "—" : value.toLocaleString("ru-RU", { maximumFractionDigits: value < 1 ? 6 : 2 });
@@ -140,6 +167,43 @@ function Metric({ label, value, hint, tone }: { label: string; value: string; hi
 }
 function Technical({ children }: { children: React.ReactNode }) {
   return <details className="technical"><summary>Технические детали <span>⌄</span></summary><div>{children}</div></details>;
+}
+function blockerLabel(blocker: string) {
+  const remainingTrades = blocker.match(/^need (\d+) more completed round trips$/);
+  if (remainingTrades) return `Нужно ещё ${remainingTrades[1]} полных виртуальных сделок текущего состава.`;
+  if (blocker === "portfolio net PnL after costs is not positive") return "Общий результат текущего портфеля после расходов должен стать положительным.";
+  if (blocker === "model execution oracles have not passed") return "Завершить независимые проверки стабильности и исполнения моделей.";
+  if (blocker === "no profitable model currently has a net signal") return "Дождаться нового сигнала прибыльной модели и проверить его без реального ордера.";
+  if (blocker === "no governed champion has complete forward evidence") return "Назначить champion можно только после полного forward-доказательства.";
+  return blocker;
+}
+function WaitingFor({ blockers = [] }: { blockers?: string[] }) {
+  if (blockers.length === 0) return null;
+  return <div className="waitingFor"><b>Что ещё требуется</b><ul>{blockers.slice(0, 3).map(blocker => <li key={blocker}>{blockerLabel(blocker)}</li>)}</ul></div>;
+}
+function lifecycleLabel(event: RuntimeLifecycleEvent) {
+  if (event.type === "STARTED") return event.planned ? "Наблюдатель запущен после планового обновления" : "Наблюдатель запущен";
+  if (event.type === "PLANNED_RESTART") return "Плановый перезапуск наблюдателя";
+  if (event.type === "UNEXPECTED_TERMINATION") return "Обнаружено незапланированное завершение";
+  if (event.type === "STOPPED") return "Наблюдатель штатно остановлен";
+  return "Состояние наблюдателя изменилось";
+}
+function restartReason(reason?: string) {
+  const labels: Record<string, string> = {
+    LAUNCHD_START: "запуск службой macOS",
+    LIGHTWEIGHT_FORWARD_FACTORY_REFRESH: "обновление лёгкой исследовательской фабрики",
+    RESEARCH_REGISTRY_REFRESH: "обновление реестра исследовательских моделей",
+    SERVICE_INSTALL_OR_UPDATE: "установка или обновление службы",
+    SERVICE_TELEMETRY_UPDATE: "обновление эксплуатационной телеметрии",
+    RUNTIME_PUBLISH_INTERVAL_UPDATE: "оптимизация частоты публикации состояния",
+    PROCESS_ENDED_WITHOUT_STOP_EVENT: "процесс исчез без события штатной остановки",
+    SIGNAL_SIGTERM: "штатный сигнал остановки",
+    SIGNAL_SIGINT: "ручная остановка",
+    DURATION_COMPLETE: "завершён заданный интервал",
+    STARTUP_FAILURE: "ошибка запуска",
+    RUNTIME_FAILURE: "ошибка рабочего процесса",
+  };
+  return labels[reason ?? ""] ?? reason ?? "причина не опубликована";
 }
 function PositionCard({ symbol, item }: { symbol: string; item: SymbolState }) {
   const long = item.position === 1;
@@ -209,6 +273,16 @@ export default function Page() {
   const activeStrategies = runtime?.factor_model_tournament?.active_models ?? leaderboard.length;
   const virtualReturn = paper?.portfolio?.return;
   const sourcesOk = runtime?.source_status?.bybit === "CONNECTED" && runtime?.source_status?.binance === "CONNECTED";
+  const runtimeHealth = runtime?.runtime_health;
+  const sourceFreshness = runtimeHealth?.sources ?? {};
+  const freshnessAvailable = ["bybit", "binance"].every(source => sourceFreshness[source]?.last_message_age_seconds != null);
+  const sourcesFresh = !freshnessAvailable || ["bybit", "binance"].every(source => {
+    const sourceAge = sourceFreshness[source]?.last_message_age_seconds;
+    return sourceAge != null && sourceAge < 60;
+  });
+  const storage = runtime?.storage_health;
+  const lifecycle = runtime?.runtime_lifecycle;
+  const lifecycleEvents = [...(lifecycle?.events ?? [])].sort((a, b) => new Date(b.occurred_at ?? 0).getTime() - new Date(a.occurred_at ?? 0).getTime());
   const live = runtime?.mode === "LIVE" && runtime?.execution_network_available === true;
   const ready = governor?.forward_oos_confirmation_passed === true;
   const portfolioNet = Number(runtime?.multi_model_ledger?.net_pnl_usdt ?? 0);
@@ -222,7 +296,8 @@ export default function Page() {
   const virtualCapital = runtime?.modeled_capital_usdt != null ? Number(runtime.modeled_capital_usdt) : Number(runtime?.multi_model_portfolio?.portfolio_risk_limit_usdt ?? 0) / 0.005;
   const stopped = governor?.terminal_rejection === true;
   const age = runtime?.server_received_at || runtime?.updated_at ? Math.max(0, Math.floor((now - new Date(runtime.server_received_at ?? runtime.updated_at ?? "").getTime()) / 1000)) : null;
-  const healthy = sourcesOk && runtime?.watchdog_status === "HEALTHY" && (age ?? 999) < 180;
+  const healthy = sourcesOk && sourcesFresh && runtime?.watchdog_status === "HEALTHY" && (age ?? 999) < 180;
+  const stale = (age ?? 0) >= 180 || (sourcesOk && !sourcesFresh);
   const automation = runtime?.promotion_automation;
   const manualAction = automation?.manual_action;
   const mainStatus = automation?.requires_attention ? { title: "Atlas ждёт вашего решения", tone: "warning" as Tone } : !sourcesOk ? { title: "Atlas ждёт данные", tone: "neutral" as Tone } : live ? { title: "Atlas торгует", tone: "positive" as Tone } : recoveringLoss ? { title: "Atlas заменяет убыточный портфель", tone: "warning" as Tone } : ready ? { title: "Atlas завершил проверку", tone: "positive" as Tone } : stopped && activeStrategies === 0 ? { title: "Atlas ищет новую стратегию", tone: "warning" as Tone } : { title: "Atlas учится", tone: "warning" as Tone };
@@ -242,12 +317,15 @@ export default function Page() {
     <header className="topbar"><div><span className="brand">ATLAS</span><small>Автономный торговый агент</small></div><Badge status={healthy ? "HEALTHY" : "INSUFFICIENT_EVIDENCE"} label={healthy ? "Система работает" : "Нужна проверка"} /></header>
 
     {error && <div className="errorBanner" role="alert">Не удалось получить свежее обновление. Показаны последние доступные данные.</div>}
+    {!error && stale && <div className="errorBanner" role="alert">Данные устарели или один из источников давно не присылал сообщения. Торговая готовность считается заблокированной до восстановления свежести.</div>}
 
     {tab === "home" && <div className="page homePage">
       {automation?.requires_attention && manualAction && <section className="approvalAlarm" role="alert"><div className="alarmIcon" aria-hidden="true">!</div><div><span className="eyebrow">ТРЕБУЕТСЯ РЕШЕНИЕ ВЛАДЕЛЬЦА</span><h2>{manualAction.title}</h2><p>{manualAction.warning}</p><button type="button" onClick={() => { setTab("settings"); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Открыть безопасный запуск</button></div></section>}
       <section className={`statusCard ${mainStatus.tone}`}><div><span className="eyebrow">ТЕКУЩИЙ СТАТУС</span><h1>{mainStatus.title}</h1><p>{live ? "Реальная торговля активна" : "Реальные ордера отключены. Atlas торгует только виртуально."}</p></div><span className="statusMark" aria-hidden="true">{live || ready ? "✓" : "●"}</span></section>
 
-      <section className="section"><div className="sectionHead"><div><span className="eyebrow">ЧЕСТНАЯ ГОТОВНОСТЬ</span><h2>Три независимые проверки</h2></div><Badge status={runtime?.system_readiness?.overall_status === "READY_FOR_EXPLICIT_DEMO_REVIEW" ? "PASS" : "COLLECTING_DATA"} label={runtime?.system_readiness?.overall_status === "READY_FOR_EXPLICIT_DEMO_REVIEW" ? "Готово к review" : "Исследование продолжается"} /></div><p className="note">Работающая инфраструктура не означает, что прибыль уже доказана.</p><div className="riskGrid"><Metric label="Поиск и данные" value={readinessLabel("discovery", runtime?.system_readiness?.discovery_health?.status)} /><Metric label="Доказательство прибыли" value={readinessLabel("alpha", runtime?.system_readiness?.alpha_evidence?.status)} /><Metric label="Готовность исполнения" value={readinessLabel("execution", runtime?.system_readiness?.execution_readiness?.status)} /></div><Technical><p>Discovery: {runtime?.system_readiness?.discovery_health?.status ?? "—"}; blockers: {(runtime?.system_readiness?.discovery_health?.blockers ?? []).join(", ") || "нет"}</p><p>Alpha: {runtime?.system_readiness?.alpha_evidence?.status ?? "—"}; blockers: {(runtime?.system_readiness?.alpha_evidence?.blockers ?? []).join(", ") || "нет"}</p><p>Execution: {runtime?.system_readiness?.execution_readiness?.status ?? "—"}; blockers: {(runtime?.system_readiness?.execution_readiness?.blockers ?? []).join(", ") || "нет"}</p></Technical></section>
+      <section className="section"><div className="sectionHead"><div><span className="eyebrow">КОМПЬЮТЕР И КАНАЛЫ ДАННЫХ</span><h2>Эксплуатационное состояние</h2></div><Badge status={healthy ? "HEALTHY" : "INSUFFICIENT_EVIDENCE"} label={healthy ? "Свежие данные" : "Требуется внимание"} /></div><div className="riskGrid"><Metric label="CPU наблюдателя" value={runtimeHealth?.process_cpu_percent == null ? "—" : `${runtimeHealth.process_cpu_percent.toFixed(1)}% ядра`} /><Metric label="Пиковая RAM" value={bytes(runtimeHealth?.process_max_rss_bytes)} /><Metric label="Работает без перерыва" value={duration(runtimeHealth?.uptime_seconds)} /><Metric label="Данные на диске" value={bytes(storage?.project_data_bytes)} hint={`raw: ${bytes(storage?.bytes_by_area?.raw)}`} /><Metric label="Свободно" value={storage?.free_percent == null ? "—" : `${storage.free_percent.toFixed(1)}%`} tone={storage?.critical ? "negative" : storage?.warning ? "warning" : "positive"} /><Metric label="Прирост данных" value={storage?.growth_bytes_per_day == null ? "собирается" : `${storage.growth_bytes_per_day >= 0 ? "+" : "−"}${bytes(Math.abs(storage.growth_bytes_per_day))}/сутки`} /></div><div className="sourceGrid">{["bybit", "binance"].map(source => { const item = sourceFreshness[source]; return <article key={source}><div><b>{source === "bybit" ? "Bybit" : "Binance"}</b><small>{item?.last_message_age_seconds == null ? "время последнего сообщения неизвестно" : `последнее сообщение ${duration(item.last_message_age_seconds)} назад`}</small></div><Badge status={item?.status === "CONNECTED" && (item.last_message_age_seconds ?? 999) < 60 ? "HEALTHY" : "COLLECTING_DATA"} label={item?.status === "CONNECTED" ? "Подключён" : "Переподключение"} /></article>; })}</div><Technical><p>Load 1m: {runtimeHealth?.system_load_1m ?? "—"} на {runtimeHealth?.system_cpu_count ?? "—"} ядрах; normalized: {runtimeHealth?.system_load_ratio_1m ?? "—"}</p><p>Публикация runtime: каждые {runtime?.progress_write_interval_seconds ?? "—"} сек.</p><p>Dashboard sync: {runtime?.dashboard_sync_status ?? "—"}; последний успех: {runtime?.dashboard_sync_last_success_at ? new Date(runtime.dashboard_sync_last_success_at).toLocaleString("ru-RU") : "—"}</p><p>Planned restarts: {number(lifecycle?.counters?.planned_restarts)}; unexpected: {number(lifecycle?.counters?.unexpected_terminations)}; starts: {number(lifecycle?.counters?.starts)}</p><p>Storage sample: {storage?.checked_at ?? "—"}; growth sample: {storage?.growth_sample_hours ?? "—"} ч; forecast: {storage?.estimated_days_until_full ?? "—"} дней</p></Technical></section>
+
+      <section className="section"><div className="sectionHead"><div><span className="eyebrow">ЧЕСТНАЯ ГОТОВНОСТЬ</span><h2>Три независимые проверки</h2></div><Badge status={runtime?.system_readiness?.overall_status === "READY_FOR_EXPLICIT_DEMO_REVIEW" ? "PASS" : "COLLECTING_DATA"} label={runtime?.system_readiness?.overall_status === "READY_FOR_EXPLICIT_DEMO_REVIEW" ? "Готово к review" : "Исследование продолжается"} /></div><p className="note">Работающая инфраструктура не означает, что прибыль уже доказана.</p><div className="riskGrid"><Metric label="Поиск и данные" value={readinessLabel("discovery", runtime?.system_readiness?.discovery_health?.status)} /><Metric label="Доказательство прибыли" value={readinessLabel("alpha", runtime?.system_readiness?.alpha_evidence?.status)} /><Metric label="Готовность исполнения" value={readinessLabel("execution", runtime?.system_readiness?.execution_readiness?.status)} /></div><WaitingFor blockers={automation?.blockers} /><Technical><p>Discovery: {runtime?.system_readiness?.discovery_health?.status ?? "—"}; blockers: {(runtime?.system_readiness?.discovery_health?.blockers ?? []).join(", ") || "нет"}</p><p>Alpha: {runtime?.system_readiness?.alpha_evidence?.status ?? "—"}; blockers: {(runtime?.system_readiness?.alpha_evidence?.blockers ?? []).join(", ") || "нет"}</p><p>Execution: {runtime?.system_readiness?.execution_readiness?.status ?? "—"}; blockers: {(runtime?.system_readiness?.execution_readiness?.blockers ?? []).join(", ") || "нет"}</p></Technical></section>
 
       <section className="performance"><div><span className="eyebrow">РЕЗУЛЬТАТ ОДНОЙ МОДЕЛИ · {paper?.display_name ?? modelLabel(paper?.model_id)}</span><strong className={(virtualReturn ?? 0) > 0 ? "positive" : "negative"}>{pct(virtualReturn)}</strong><p className="note">Это собственная статистика {paper?.display_name ?? modelLabel(paper?.model_id)}, а не общий результат параллельного портфеля. При смене кандидата число меняется вместе с моделью.</p></div><div className="miniGrid"><Metric label="Сделки этой модели" value={`${number(completed)} завершено`} /><Metric label="Открыто этой моделью" value={`${number(positions.length)} позиции`} /></div></section>
 
@@ -257,7 +335,7 @@ export default function Page() {
 
       <section className="section"><div className="sectionHead"><div><span className="eyebrow">ПОЗИЦИИ</span><h2>Открытые позиции</h2></div>{positions.length > 0 && <button onClick={() => setTab("trading")}>Все позиции</button>}</div>{positions.length === 0 ? <p className="empty">Сейчас открытых позиций нет.</p> : <div className="positionPreview">{positions.slice(0, 2).map(([symbol, item]) => <PositionCard key={symbol} symbol={symbol} item={item} />)}</div>}</section>
 
-      <section className="section leader"><div className="sectionHead"><div><span className="eyebrow">ЛИДЕР ПО ДОКАЗАТЕЛЬСТВАМ · {leader?.display_name ?? "имя назначается"}</span><h2>{strategyName(leader?.expression ?? paper?.expression)}</h2></div>{leader && <span className="leaderTag">№1 по доказательствам</span>}</div>{leader ? <><div className="modelChips"><span>{mechanismName(runtime?.multi_model_portfolio?.mechanisms_by_model?.[leader.model_id ?? ""], leader.expression)}</span><span>{(runtime?.multi_model_portfolio?.eligible_markets_by_model?.[leader.model_id ?? ""] ?? []).map(coin).join(" · ") || "Нет допущенных рынков"}</span><EvidenceLight grade={leader.evidence_grade} /><span className="riskState">{runtime?.multi_model_portfolio?.model_lifecycle?.[leader.model_id ?? ""]?.status ?? "ACTIVE"}</span></div><div className="leaderMetrics"><strong className={leaderProfitable ? "positive" : "negative"}>{pct(leaderReturn)}</strong><span>{number(leader.completed_trades ?? completed)} сделок</span><span>Макс. просадка {dd(leader.portfolio_max_drawdown ?? paper?.portfolio?.max_drawdown)}</span></div><Badge status={leaderProfitable ? "PROMISING" : "REJECTED_L2_ECONOMICS"} label={leaderProfitable ? "Пока прибыльна после учтённых комиссий" : "Пока убыточна после учтённых комиссий"} /><p className="note">Первое место получает кандидат с наиболее зрелыми фактическими доказательствами. Внутренний исследовательский score остаётся в технических деталях.</p>{latestLeaderChange && <p className="note">Последняя смена: {latestLeaderChange.previous_display_name ?? modelLabel(latestLeaderChange.previous_model_id)} → {latestLeaderChange.display_name ?? modelLabel(latestLeaderChange.model_id)}.</p>}<Technical><p>Имя: {leader.display_name ?? "—"}; Model ID: {leader.model_id ?? paper?.model_id ?? "—"}</p><p>Формула: <code>{leader.expression ?? paper?.expression ?? "—"}</code></p><p>Score: {leader.score ?? "—"}; basis: {leader.score_basis ?? "—"}</p><p>Internal state: {leader.decision_state ?? governor?.decision_state ?? "—"}</p></Technical></> : <p className="empty">Пока недостаточно данных для выбора текущего кандидата.</p>}</section>
+      <section className="section leader"><div className="sectionHead"><div><span className="eyebrow">ЛИДЕР ПО ДОКАЗАТЕЛЬСТВАМ · {leader?.display_name ?? "имя назначается"}</span><h2>{strategyName(leader?.expression ?? paper?.expression)}</h2></div>{leader && <span className="leaderTag">№1 по доказательствам</span>}</div>{leader ? <><div className="modelChips"><span>{mechanismName(runtime?.multi_model_portfolio?.mechanisms_by_model?.[leader.model_id ?? ""], leader.expression)}</span><span>{(runtime?.multi_model_portfolio?.eligible_markets_by_model?.[leader.model_id ?? ""] ?? []).map(coin).join(" · ") || "Нет допущенных рынков"}</span><EvidenceLight grade={leader.evidence_grade} /><span className="riskState">{runtime?.multi_model_portfolio?.model_lifecycle?.[leader.model_id ?? ""]?.status ?? "ACTIVE"}</span></div><div className="leaderMetrics"><strong className={leaderProfitable ? "positive" : "negative"}>{pct(leaderReturn)}</strong><span>{number(leader.completed_trades ?? completed)} сделок</span><span>Макс. просадка {dd(leader.portfolio_max_drawdown ?? paper?.portfolio?.max_drawdown)}</span></div><Badge status={leaderProfitable ? "PROMISING" : "REJECTED_L2_ECONOMICS"} label={leaderProfitable ? "Плюс в текущем SHADOW; устойчивость не доказана" : "Пока убыточна после учтённых комиссий"} /><p className="note">Первое место получает кандидат с наиболее зрелыми фактическими доказательствами. Внутренний исследовательский score остаётся в технических деталях.</p>{latestLeaderChange && <p className="note">Последняя смена: {latestLeaderChange.previous_display_name ?? modelLabel(latestLeaderChange.previous_model_id)} → {latestLeaderChange.display_name ?? modelLabel(latestLeaderChange.model_id)}.</p>}<Technical><p>Имя: {leader.display_name ?? "—"}; Model ID: {leader.model_id ?? paper?.model_id ?? "—"}</p><p>Формула: <code>{leader.expression ?? paper?.expression ?? "—"}</code></p><p>Score: {leader.score ?? "—"}; basis: {leader.score_basis ?? "—"}</p><p>Internal state: {leader.decision_state ?? governor?.decision_state ?? "—"}</p></Technical></> : <p className="empty">Пока недостаточно данных для выбора текущего кандидата.</p>}</section>
 
       <section className="section"><div className="sectionHead"><div><span className="eyebrow">ОБЩИЙ РЕЗУЛЬТАТ ПАРАЛЛЕЛЬНЫХ МОДЕЛЕЙ</span><h2>Только полные сделки текущего состава</h2></div><Badge status="COLLECTING_DATA" label="Только SHADOW" /></div><p className="note">Это отдельный ledger всех одновременно работающих моделей. Противоположные сигналы оцениваются независимо, даже если итоговая цель на бирже равна нулю. PnL учитывает заданную модель комиссий; funding пока показывается отдельно и не должен считаться полностью доказанным расходом.</p><div className="riskGrid"><Metric label="Активные модели" value={number(runtime?.multi_model_portfolio?.active_models)} /><Metric label="Допущено прибыльных" value={number(runtime?.multi_model_portfolio?.eligible_profitable_models?.length)} /><Metric label="Открытые net-цели" value={number(runtime?.multi_model_portfolio?.allocation_count)} /><Metric label="Net PnL по модели расходов" value={money(runtime?.multi_model_ledger?.net_pnl_usdt)} tone={portfolioNet > 0 ? "positive" : portfolioNet < 0 ? "negative" : "neutral"} /><Metric label="Наблюдения эпохи" value={observationProgress} /><Metric label="Изменения позиций" value={transitionProgress} /><Metric label="Полные сделки для gate" value={roundTripProgress} /><Metric label="Следующее действие" value={runtime?.stall_acceleration?.status === "ACTIVE" ? "Идёт поиск замены" : "Сбор чистой эпохи"} /></div><Technical><p>Epoch: {runtime?.multi_model_ledger?.current_epoch?.epoch_id ?? "—"}; models: {(runtime?.multi_model_ledger?.current_epoch?.model_ids ?? []).map(modelLabel).join(", ") || "—"}</p><p>Унаследовано без оценки до закрытия: {number(runtime?.multi_model_ledger?.current_epoch?.unscored_inherited_positions)}</p><p>Lifetime net (не управляет новой эпохой): {money(runtime?.multi_model_ledger?.lifetime_audit?.net_pnl_usdt)}</p><p>Status: {runtime?.multi_model_portfolio?.status ?? "—"}; forward gate: {portfolioGate?.status ?? "—"}</p><p>Причина ускорения: {runtime?.stall_acceleration?.activation_reason ?? "нет"}; {runtime?.stall_acceleration?.reason ?? "—"}</p><p>Gross эпохи: {money(runtime?.multi_model_ledger?.gross_pnl_usdt)}; fees эпохи: {money(runtime?.multi_model_ledger?.fees_usdt)}</p><p>Policy: {runtime?.multi_model_ledger?.current_epoch?.policy ?? "—"}</p><p>Execution allowed: {String(runtime?.multi_model_portfolio?.execution_allowed ?? false)}; Demo allowed: {String(runtime?.multi_model_portfolio?.demo_allowed ?? false)}</p></Technical></section>
 
@@ -293,12 +371,13 @@ export default function Page() {
 
       {approvalMessage && <div className={`approvalMessage ${approvalMessage.ok ? "ok" : "error"}`} role="status">{approvalMessage.text}</div>}
       <section className="section settingsList"><div><span>Биржа</span><b>{sourcesOk ? "Bybit и Binance подключены" : "Биржа не подключена"}</b></div><div><span>Реальные ордера</span><b className={live ? "positive" : "neutral"}>{live ? "Разрешены" : "Отключены"}</b></div><div><span>Виртуальный капитал</span><b>{money(virtualCapital)}</b></div><div><span>Риск одной сделки</span><b>{runtime?.risk_per_trade_fraction == null ? "Не опубликован" : pct(runtime.risk_per_trade_fraction)}</b></div><div><span>Контроль системы</span><b>{humanStatus(runtime?.watchdog_status).label}</b></div></section>
+      <section className="section"><div className="sectionHead"><div><span className="eyebrow">ИСТОРИЯ СЛУЖБЫ</span><h2>Запуски и остановки</h2></div><span>{number(lifecycleEvents.length)} событий</span></div>{lifecycleEvents.length === 0 ? <p className="empty">История появится после следующего запуска обновлённого наблюдателя.</p> : <div className="dayList lifecycleList">{lifecycleEvents.slice(0, 10).map((event, index) => <article key={`${event.session_id}-${event.occurred_at}-${index}`}><time>{event.occurred_at ? new Date(event.occurred_at).toLocaleString("ru-RU", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—"}</time><div><b className={event.type === "UNEXPECTED_TERMINATION" ? "negative" : event.type === "PLANNED_RESTART" ? "warning" : ""}>{lifecycleLabel(event)}</b><small>{restartReason(event.reason)} · PID {event.pid ?? "—"}</small></div></article>)}</div>}<Technical><p>Current session: {lifecycle?.current_session?.session_id ?? "—"}; PID: {lifecycle?.current_session?.pid ?? "—"}</p><p>Started: {lifecycle?.current_session?.started_at ?? "—"}; reason: {lifecycle?.current_session?.start_reason ?? "—"}</p><p>Orderly stops: {number(lifecycle?.counters?.orderly_stops)}; planned restarts: {number(lifecycle?.counters?.planned_restarts)}; unexpected terminations: {number(lifecycle?.counters?.unexpected_terminations)}</p></Technical></section>
       <section className="section"><h2>Диагностика</h2><p className="note">Технические данные нужны для проверки системы и не отменяют защитные ограничения.</p><Technical><p>Promotion stage: {automation?.stage ?? "—"}</p><p>Blockers: {(automation?.blockers ?? []).join(", ") || "нет"}</p><p>Mode: {runtime?.mode ?? "—"}</p><p>Watchdog: {runtime?.watchdog_status ?? "—"}</p><p>Bybit: {runtime?.source_status?.bybit ?? "—"}; Binance: {runtime?.source_status?.binance ?? "—"}</p><p>Execution network: {String(runtime?.execution_network_available ?? false)}</p><p>Demo broker: {runtime?.full_system_audit?.demo_broker_status ?? "—"}</p><p>Current gate: {runtime?.trading_gate_audit?.current_blocking_gate ?? "—"}</p></Technical></section>
     </div>}
 
     {confirming && manualAction && <div className="confirmBackdrop" role="presentation"><section className="confirmDialog" role="dialog" aria-modal="true" aria-labelledby="approval-title"><span className="confirmMark" aria-hidden="true">!</span><h2 id="approval-title">{manualAction.title}</h2><p>{manualAction.warning}</p><div className="confirmPhrase"><span>Вы подтверждаете действие</span><b>{manualAction.confirmation_phrase}</b></div><label className="passwordField"><span>Пароль владельца</span><input type="password" inputMode="numeric" autoComplete="current-password" value={controlPassword} onChange={(event) => setControlPassword(event.target.value)} autoFocus /></label><div className="confirmButtons"><button type="button" onClick={() => { setConfirming(false); setControlPassword(""); }} disabled={approvalBusy}>Отмена</button><button className="launchButton" type="button" onClick={() => void submitApproval()} disabled={approvalBusy || controlPassword.length === 0}>{approvalBusy ? "Проверяем…" : "Да, подтверждаю"}</button></div></section></div>}
 
-    <footer className="updated">Обновлено {age == null ? "—" : age < 5 ? "только что" : `${age} сек. назад`}</footer>
+    <footer className="updated">Обновлено {runtime?.server_received_at || runtime?.updated_at ? new Date(runtime.server_received_at ?? runtime.updated_at ?? "").toLocaleString("ru-RU", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—"} · {age == null ? "возраст неизвестен" : age < 5 ? "только что" : `${age} сек. назад`}</footer>
     <nav className="bottomNav" aria-label="Основная навигация">{tabs.map(item => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => { setTab(item.id); window.scrollTo({ top: 0, behavior: "smooth" }); }} aria-current={tab === item.id ? "page" : undefined}><i aria-hidden="true">{item.icon}</i><span>{item.label}</span></button>)}</nav>
   </div></main>;
 }

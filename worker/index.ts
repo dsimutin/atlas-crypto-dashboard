@@ -9,7 +9,7 @@ interface WorkerEnv extends Env {
   APPROVAL_RELAY_URL?: string;
 }
 
-const DASHBOARD_BUILD_ID = "2026.08.09-promotion-automation-03";
+const DASHBOARD_BUILD_ID = "2026.08.09-runtime-health-04";
 const MAX_RUNTIME_PAYLOAD_BYTES = 65_536;
 const MAX_FAILED_PASSWORD_ATTEMPTS = 5;
 const PASSWORD_WINDOW_MS = 15 * 60 * 1000;
@@ -75,7 +75,10 @@ const runtimeFields = new Set([
   "qualified_oos_observations", "required_oos_observations",
   "modeled_capital_usdt", "risk_per_trade_fraction", "risk_budget_usdt",
   "execution_network_available", "source_status", "source_reconnects", "source_errors",
-  "source_reconnects_last_hour", "storage_health",
+  "source_reconnects_last_hour", "source_last_message_at", "storage_health",
+  "runtime_health", "runtime_lifecycle",
+  "progress_write_interval_seconds",
+  "dashboard_sync_status", "dashboard_sync_last_success_at", "dashboard_sync_error",
   "binance_queue_depth", "binance_queue_capacity", "binance_queue_drops", "binance_queue_drop_events",
   "archive_status",
   "watchdog_status", "watchdog_checked_at", "watchdog_reasons",
@@ -95,9 +98,10 @@ const runtimeFields = new Set([
   "microstructure_research",
   "microstructure_samples", "microstructure_first_sample_at", "counterfactual_cycles",
   "counterfactual_gate_audit", "strategy_robustness",
+  "system_readiness", "venue_execution_evidence", "research_rejection_analysis",
   "full_system_audit", "data_acceptance",
   "cryptofeed_sidecar",
-  "scalp_horizon_prescreen", "scalp_tail_classifier",
+  "scalp_horizon_prescreen", "scalp_tail_classifier", "scalp_shadow", "scalp_admission",
   "scalp_tlob_challenger", "scalp_model_comparison",
   "native_l2_dataset", "native_l2_sequences", "native_l2_tlob", "native_l2_controller",
   "multi_model_portfolio",

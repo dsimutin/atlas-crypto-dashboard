@@ -63,6 +63,29 @@ test("derives readiness and risk from backend fields", async () => {
   assert.doesNotMatch(source, /readinessPercent|riskScore/);
 });
 
+test("accepts serialized numeric risk and prevents narrow-screen overflow", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(source, /risk_per_trade_fraction\?: number \| string/);
+  assert.match(source, /const numeric = Number\(value\)/);
+  assert.match(source, /Что ещё требуется/);
+  assert.match(styles, /\.page,\.page>\*\{min-width:0;max-width:100%\}/);
+  assert.match(styles, /\.sectionHead,\.candidateTop\{flex-wrap:wrap\}/);
+});
+
+test("renders operational health and lifecycle telemetry without enabling execution", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
+  for (const field of ["runtime_health", "runtime_lifecycle", "source_last_message_at", "storage_health", "dashboard_sync_status"]) {
+    assert.match(source, new RegExp(field));
+    assert.match(worker, new RegExp(`"${field}"`));
+  }
+  assert.match(source, /КОМПЬЮТЕР И КАНАЛЫ ДАННЫХ/);
+  assert.match(source, /ИСТОРИЯ СЛУЖБЫ/);
+  assert.match(source, /Данные устарели/);
+  assert.doesNotMatch(source, /execution_network_available:\s*true/);
+});
+
 test("includes loading, error and empty states", async () => {
   const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   assert.match(source, /Atlas обновляет состояние/);
