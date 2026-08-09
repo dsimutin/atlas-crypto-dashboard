@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "atlas-crypto-dashboard",
+  "main": "dist/server/index.js",
+  "compatibility_date": "2026-08-02",
+  "compatibility_flags": ["nodejs_compat"],
+  "no_bundle": true,
+  "rules": [
+    { "type": "ESModule", "globs": ["**/*.js", "**/*.mjs"] }
+  ],
+  "assets": {
+    "directory": "dist/client",
+    "binding": "ASSETS",
+    "run_worker_first": ["/"]
+  },
+  "images": {
+    "binding": "IMAGES"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "atlas-crypto-runtime",
+      "database_id": "fe464dd7-776c-47be-b029-8fc05b4dcf36"
+    }
+  ],
+  "observability": { "enabled": true }
+}

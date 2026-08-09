@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1785581011850,
+      "tag": "0000_flat_stepford_cuckoos",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1786274826192,
+      "tag": "0001_curvy_kinsey_walden",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1786275959435,
+      "tag": "0002_stiff_nico_minoru",
+      "breakpoints": true
+    }
+  ]
+}
