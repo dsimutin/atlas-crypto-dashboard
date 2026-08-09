@@ -22,11 +22,23 @@ test("renders the human-readable Atlas application shell", async () => {
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });
 
-test("has no secret inputs or order execution surface", async () => {
+test("has no secret inputs or direct order execution surface", async () => {
   const response = await render();
   const html = await response.text();
   assert.doesNotMatch(html, /<form|<input|<textarea|contenteditable/i);
   assert.doesNotMatch(html, /apiKey|apiSecret|placeOrder|submitOrder/i);
+});
+
+test("includes guarded owner controls and a prominent readiness alarm", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
+  assert.match(source, /Включить ограниченное Demo/);
+  assert.match(source, /Включить реальные деньги/);
+  assert.match(source, /ТРЕБУЕТСЯ РЕШЕНИЕ ВЛАДЕЛЬЦА/);
+  assert.match(source, /Да, подтверждаю/);
+  assert.match(worker, /oai-authenticated-user-id/);
+  assert.match(worker, /ATLAS_OWNER_USER_ID/);
+  assert.match(worker, /manualAction/);
 });
 
 test("provides four-level mobile navigation and plain status copy", async () => {

@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://atlas-crypto-dashboard.atlas-crypto-dima.workers.dev/"),
+  metadataBase: new URL("https://ai-crypto-readiness.dfantomasd.chatgpt.site/"),
   title: "Atlas — автономный торговый агент",
   description: "Понятное состояние Atlas: результат, готовность, виртуальные позиции и контроль риска.",
   manifest: "/site.webmanifest",

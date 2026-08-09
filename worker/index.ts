@@ -4,9 +4,12 @@ import handler from "vinext/server/app-router-entry";
 
 interface WorkerEnv extends Env {
   RUNTIME_SYNC_TOKEN: string;
+  ATLAS_OWNER_USER_ID: string;
+  RUNTIME_READ_URL?: string;
+  APPROVAL_RELAY_URL?: string;
 }
 
-const DASHBOARD_BUILD_ID = "2026.08.09-profit-evidence-01";
+const DASHBOARD_BUILD_ID = "2026.08.09-promotion-automation-02";
 const MAX_RUNTIME_PAYLOAD_BYTES = 65_536;
 
 const runtimeFields = new Set([
@@ -98,6 +101,7 @@ const runtimeFields = new Set([
   "multi_model_portfolio",
   "multi_model_ledger",
   "multi_model_demo_governance",
+  "promotion_automation",
   "stall_acceleration",
 ]);
 
@@ -174,6 +178,18 @@ async function readBoundedJson(request: Request): Promise<unknown> {
 
 async function runtimeApi(request: Request, env: WorkerEnv): Promise<Response> {
   if (request.method === "GET") {
+    if (env.RUNTIME_READ_URL) {
+      const upstream = await fetch(env.RUNTIME_READ_URL, {
+        headers: { Accept: "application/json", "User-Agent": "atlas-private-dashboard/1" },
+        cf: { cacheTtl: 0 },
+      });
+      if (!upstream.ok) return jsonResponse({ status: "UPSTREAM_UNAVAILABLE" }, 503);
+      const payload = await upstream.json() as Record<string, unknown>;
+      if (payload.execution_network_available !== false || payload.mode !== "SHADOW") {
+        return jsonResponse({ status: "UNSAFE_UPSTREAM_REJECTED" }, 503);
+      }
+      return jsonResponse(payload);
+    }
     const row = await env.DB.prepare(
       "SELECT payload, received_at AS receivedAt FROM runtime_status WHERE id = 1",
     ).first<{ payload: string; receivedAt: string }>();
@@ -215,6 +231,217 @@ async function runtimeApi(request: Request, env: WorkerEnv): Promise<Response> {
   return jsonResponse({ status: "OK", received_at: receivedAt });
 }
 
+async function sameIdentity(provided: string | null, expected: string): Promise<boolean> {
+  if (!provided || !expected) return false;
+  const encoder = new TextEncoder();
+  const [providedHash, expectedHash] = await Promise.all([
+    crypto.subtle.digest("SHA-256", encoder.encode(provided.trim().toLowerCase())),
+    crypto.subtle.digest("SHA-256", encoder.encode(expected.trim().toLowerCase())),
+  ]);
+  const left = new Uint8Array(providedHash);
+  const right = new Uint8Array(expectedHash);
+  let difference = 0;
+  for (let index = 0; index < right.length; index += 1) difference |= left[index] ^ right[index];
+  return difference === 0;
+}
+
+async function currentRuntime(env: WorkerEnv): Promise<Record<string, unknown> | null> {
+  if (env.RUNTIME_READ_URL) {
+    const response = await fetch(env.RUNTIME_READ_URL, {
+      headers: { Accept: "application/json", "User-Agent": "atlas-private-dashboard/1" },
+      cf: { cacheTtl: 0 },
+    });
+    if (!response.ok) return null;
+    const payload = await response.json() as Record<string, unknown>;
+    return payload.execution_network_available === false && payload.mode === "SHADOW"
+      ? payload
+      : null;
+  }
+  const row = await env.DB.prepare(
+    "SELECT payload FROM runtime_status WHERE id = 1",
+  ).first<{ payload: string }>();
+  return row ? JSON.parse(row.payload) as Record<string, unknown> : null;
+}
+
+async function storeApproval(env: WorkerEnv, approval: {
+  id: string; action: string; requestId: string; authorityId: string;
+  requestedAt: string; expiresAt: string; approvedBy: string;
+}): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO approval_requests
+      (id, action, request_id, authority_id, requested_at, expires_at, approved_by, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'APPROVED')`,
+  ).bind(
+    approval.id,
+    approval.action,
+    approval.requestId,
+    approval.authorityId,
+    approval.requestedAt,
+    approval.expiresAt,
+    approval.approvedBy,
+  ).run();
+}
+
+function matchingManualAction(
+  runtime: Record<string, unknown>,
+  command: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const automation = runtime.promotion_automation as Record<string, unknown> | undefined;
+  const manualAction = automation?.manual_action as Record<string, unknown> | undefined;
+  if (
+    !manualAction
+    || (automation?.requires_attention !== true && manualAction.action !== "STOP_LIMITED_DEMO")
+  ) return null;
+  for (const key of ["action", "request_id", "authority_id"] as const) {
+    if (command[key] !== manualAction[key]) return null;
+  }
+  return manualAction;
+}
+
+async function enablementApi(request: Request, env: WorkerEnv): Promise<Response> {
+  if (request.method === "GET") {
+    if (!(await verifyBearerToken(request.headers.get("Authorization"), env.RUNTIME_SYNC_TOKEN))) {
+      return jsonResponse({ error: "unauthorized" }, 401);
+    }
+    const row = await env.DB.prepare(
+      `SELECT id, action, request_id AS requestId, authority_id AS authorityId,
+              requested_at AS requestedAt, expires_at AS expiresAt,
+              approved_by AS approvedBy, status
+         FROM approval_requests
+        WHERE status = 'APPROVED'
+        ORDER BY requested_at DESC LIMIT 1`,
+    ).first<{
+      id: string; action: string; requestId: string; authorityId: string;
+      requestedAt: string; expiresAt: string; approvedBy: string; status: string;
+    }>();
+    if (!row) return jsonResponse({ status: "NO_PENDING_APPROVAL" });
+    return jsonResponse({
+      id: row.id,
+      action: row.action,
+      request_id: row.requestId,
+      authority_id: row.authorityId,
+      requested_at: row.requestedAt,
+      expires_at: row.expiresAt,
+      approved_by: row.approvedBy,
+      status: row.status,
+      mainnet_allowed: false,
+    });
+  }
+  if (request.method !== "POST") return jsonResponse({ error: "method not allowed" }, 405);
+
+  const ownerUserId = request.headers.get("oai-authenticated-user-id");
+  if (!(await sameIdentity(ownerUserId, env.ATLAS_OWNER_USER_ID))) {
+    return jsonResponse(
+      { error: "owner authentication required", sign_in_required: !ownerUserId },
+      403,
+    );
+  }
+  let input: unknown;
+  try {
+    input = await readBoundedJson(request);
+  } catch (error) {
+    if (error instanceof RangeError) return jsonResponse({ error: "payload too large" }, 413);
+    return jsonResponse({ error: "invalid JSON" }, 400);
+  }
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return jsonResponse({ error: "invalid approval" }, 400);
+  }
+  const command = input as Record<string, unknown>;
+  const runtime = await currentRuntime(env);
+  if (!runtime) return jsonResponse({ error: "runtime unavailable" }, 409);
+  const manualAction = matchingManualAction(runtime, command);
+  if (!manualAction) {
+    return jsonResponse({ error: "no owner approval is currently requested" }, 409);
+  }
+  if (command.confirmation !== manualAction.confirmation_phrase) {
+    return jsonResponse({ error: "approval confirmation does not match current gate" }, 409);
+  }
+  const requestedAt = new Date();
+  const expiresAt = new Date(requestedAt.getTime() + 10 * 60 * 1000);
+  const id = crypto.randomUUID();
+  const approval = {
+    id,
+    action: String(command.action),
+    requestId: String(command.request_id),
+    authorityId: String(command.authority_id),
+    requestedAt: requestedAt.toISOString(),
+    expiresAt: expiresAt.toISOString(),
+    approvedBy: String(ownerUserId),
+  };
+  if (env.APPROVAL_RELAY_URL) {
+    const relay = await fetch(env.APPROVAL_RELAY_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.RUNTIME_SYNC_TOKEN}`,
+        "Content-Type": "application/json",
+        "User-Agent": "atlas-private-dashboard/1",
+      },
+      body: JSON.stringify({
+        id: approval.id,
+        action: approval.action,
+        request_id: approval.requestId,
+        authority_id: approval.authorityId,
+        requested_at: approval.requestedAt,
+        expires_at: approval.expiresAt,
+        approved_by: approval.approvedBy,
+        status: "APPROVED",
+      }),
+    });
+    if (!relay.ok) return jsonResponse({ error: "local Atlas relay rejected approval" }, 502);
+  }
+  await storeApproval(env, approval);
+  return jsonResponse({
+    status: "APPROVED",
+    id,
+    action: command.action,
+    expires_at: expiresAt.toISOString(),
+    mainnet_allowed: false,
+  });
+}
+
+async function approvalRelayApi(request: Request, env: WorkerEnv): Promise<Response> {
+  if (request.method !== "POST") return jsonResponse({ error: "method not allowed" }, 405);
+  if (!(await verifyBearerToken(request.headers.get("Authorization"), env.RUNTIME_SYNC_TOKEN))) {
+    return jsonResponse({ error: "unauthorized" }, 401);
+  }
+  let input: unknown;
+  try {
+    input = await readBoundedJson(request);
+  } catch {
+    return jsonResponse({ error: "invalid JSON" }, 400);
+  }
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return jsonResponse({ error: "invalid approval" }, 400);
+  }
+  const command = input as Record<string, unknown>;
+  const runtime = await currentRuntime(env);
+  if (!runtime || !matchingManualAction(runtime, command)) {
+    return jsonResponse({ error: "approval does not match current gate" }, 409);
+  }
+  const now = Date.now();
+  const requestedAt = Date.parse(String(command.requested_at));
+  const expiresAt = Date.parse(String(command.expires_at));
+  if (
+    !Number.isFinite(requestedAt)
+    || !Number.isFinite(expiresAt)
+    || requestedAt > now + 30_000
+    || now > expiresAt
+    || expiresAt - requestedAt > 600_000
+    || command.status !== "APPROVED"
+    || !command.approved_by
+  ) return jsonResponse({ error: "approval is stale or incomplete" }, 409);
+  await storeApproval(env, {
+    id: String(command.id),
+    action: String(command.action),
+    requestId: String(command.request_id),
+    authorityId: String(command.authority_id),
+    requestedAt: new Date(requestedAt).toISOString(),
+    expiresAt: new Date(expiresAt).toISOString(),
+    approvedBy: String(command.approved_by),
+  });
+  return jsonResponse({ status: "RELAYED", mainnet_allowed: false });
+}
+
 // Image security config. SVG sources with .svg extension auto-skip the
 // optimization endpoint on the client side (served directly, no proxy).
 // To route SVGs through the optimizer (with security headers), set
@@ -227,6 +454,14 @@ const worker = {
 
     if (url.pathname === "/api/runtime") {
       return runtimeApi(request, env);
+    }
+
+    if (url.pathname === "/api/enablement") {
+      return enablementApi(request, env);
+    }
+
+    if (url.pathname === "/api/enablement/relay") {
+      return approvalRelayApi(request, env);
     }
 
     if (url.pathname === "/_vinext/image") {
