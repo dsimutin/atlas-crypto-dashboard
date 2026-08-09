@@ -22,10 +22,10 @@ test("renders the human-readable Atlas application shell", async () => {
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });
 
-test("has no secret inputs or direct order execution surface", async () => {
+test("has no exchange-secret inputs or direct order execution surface", async () => {
   const response = await render();
   const html = await response.text();
-  assert.doesNotMatch(html, /<form|<input|<textarea|contenteditable/i);
+  assert.doesNotMatch(html, /<form|<textarea|contenteditable/i);
   assert.doesNotMatch(html, /apiKey|apiSecret|placeOrder|submitOrder/i);
 });
 
@@ -36,8 +36,9 @@ test("includes guarded owner controls and a prominent readiness alarm", async ()
   assert.match(source, /Включить реальные деньги/);
   assert.match(source, /ТРЕБУЕТСЯ РЕШЕНИЕ ВЛАДЕЛЬЦА/);
   assert.match(source, /Да, подтверждаю/);
-  assert.match(worker, /oai-authenticated-user-id/);
-  assert.match(worker, /ATLAS_OWNER_USER_ID/);
+  assert.match(source, /type="password"/);
+  assert.match(worker, /ATLAS_CONTROL_PASSWORD/);
+  assert.match(worker, /MAX_FAILED_PASSWORD_ATTEMPTS/);
   assert.match(worker, /manualAction/);
 });
 

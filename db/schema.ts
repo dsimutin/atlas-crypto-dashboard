@@ -16,3 +16,10 @@ export const approvalRequests = sqliteTable("approval_requests", {
   approvedBy: text("approved_by").notNull(),
   status: text("status").notNull(),
 });
+
+export const approvalAttempts = sqliteTable("approval_attempts", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  attemptKey: text("attempt_key").notNull(),
+  attemptedAt: text("attempted_at").notNull(),
+  success: integer("success").notNull(),
+});

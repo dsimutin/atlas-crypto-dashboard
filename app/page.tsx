@@ -152,6 +152,7 @@ export default function Page() {
   const [tab, setTab] = useState<Tab>("home");
   const [now, setNow] = useState(0);
   const [confirming, setConfirming] = useState(false);
+  const [controlPassword, setControlPassword] = useState("");
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [approvalMessage, setApprovalMessage] = useState<{ ok: boolean; text: string } | null>(null);
   useEffect(() => {
@@ -175,14 +176,17 @@ export default function Page() {
           request_id: action.request_id,
           authority_id: action.authority_id,
           confirmation: action.confirmation_phrase,
+          password: controlPassword,
         }),
       });
       const result = await response.json() as { error?: string };
       if (!response.ok) throw new Error(result.error ?? "Не удалось передать разрешение");
       setApprovalMessage({ ok: true, text: "Разрешение принято. Atlas проверит его локально и обновит режим." });
       setConfirming(false);
+      setControlPassword("");
     } catch (reason) {
-      setApprovalMessage({ ok: false, text: reason instanceof Error && reason.message === "owner authentication required" ? "Нужно войти в панель под учётной записью владельца Atlas." : "Разрешение не принято. Режим не изменён." });
+      const message = reason instanceof Error ? reason.message : "";
+      setApprovalMessage({ ok: false, text: message === "invalid control password" ? "Неверный пароль. Режим не изменён." : message === "too many password attempts" ? "Слишком много неверных попыток. Повторите через 15 минут." : "Разрешение не принято. Режим не изменён." });
     } finally {
       setApprovalBusy(false);
     }
@@ -292,7 +296,7 @@ export default function Page() {
       <section className="section"><h2>Диагностика</h2><p className="note">Технические данные нужны для проверки системы и не отменяют защитные ограничения.</p><Technical><p>Promotion stage: {automation?.stage ?? "—"}</p><p>Blockers: {(automation?.blockers ?? []).join(", ") || "нет"}</p><p>Mode: {runtime?.mode ?? "—"}</p><p>Watchdog: {runtime?.watchdog_status ?? "—"}</p><p>Bybit: {runtime?.source_status?.bybit ?? "—"}; Binance: {runtime?.source_status?.binance ?? "—"}</p><p>Execution network: {String(runtime?.execution_network_available ?? false)}</p><p>Demo broker: {runtime?.full_system_audit?.demo_broker_status ?? "—"}</p><p>Current gate: {runtime?.trading_gate_audit?.current_blocking_gate ?? "—"}</p></Technical></section>
     </div>}
 
-    {confirming && manualAction && <div className="confirmBackdrop" role="presentation"><section className="confirmDialog" role="dialog" aria-modal="true" aria-labelledby="approval-title"><span className="confirmMark" aria-hidden="true">!</span><h2 id="approval-title">{manualAction.title}</h2><p>{manualAction.warning}</p><div className="confirmPhrase"><span>Вы подтверждаете действие</span><b>{manualAction.confirmation_phrase}</b></div><div className="confirmButtons"><button type="button" onClick={() => setConfirming(false)} disabled={approvalBusy}>Отмена</button><button className="launchButton" type="button" onClick={() => void submitApproval()} disabled={approvalBusy}>{approvalBusy ? "Проверяем…" : "Да, подтверждаю"}</button></div></section></div>}
+    {confirming && manualAction && <div className="confirmBackdrop" role="presentation"><section className="confirmDialog" role="dialog" aria-modal="true" aria-labelledby="approval-title"><span className="confirmMark" aria-hidden="true">!</span><h2 id="approval-title">{manualAction.title}</h2><p>{manualAction.warning}</p><div className="confirmPhrase"><span>Вы подтверждаете действие</span><b>{manualAction.confirmation_phrase}</b></div><label className="passwordField"><span>Пароль владельца</span><input type="password" inputMode="numeric" autoComplete="current-password" value={controlPassword} onChange={(event) => setControlPassword(event.target.value)} autoFocus /></label><div className="confirmButtons"><button type="button" onClick={() => { setConfirming(false); setControlPassword(""); }} disabled={approvalBusy}>Отмена</button><button className="launchButton" type="button" onClick={() => void submitApproval()} disabled={approvalBusy || controlPassword.length === 0}>{approvalBusy ? "Проверяем…" : "Да, подтверждаю"}</button></div></section></div>}
 
     <footer className="updated">Обновлено {age == null ? "—" : age < 5 ? "только что" : `${age} сек. назад`}</footer>
     <nav className="bottomNav" aria-label="Основная навигация">{tabs.map(item => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => { setTab(item.id); window.scrollTo({ top: 0, behavior: "smooth" }); }} aria-current={tab === item.id ? "page" : undefined}><i aria-hidden="true">{item.icon}</i><span>{item.label}</span></button>)}</nav>

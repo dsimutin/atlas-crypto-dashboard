@@ -15,6 +15,13 @@
       "when": 1786274826192,
       "tag": "0001_curvy_kinsey_walden",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1786275959435,
+      "tag": "0002_stiff_nico_minoru",
+      "breakpoints": true
     }
   ]
 }

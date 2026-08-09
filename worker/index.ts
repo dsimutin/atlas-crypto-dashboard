@@ -4,13 +4,15 @@ import handler from "vinext/server/app-router-entry";
 
 interface WorkerEnv extends Env {
   RUNTIME_SYNC_TOKEN: string;
-  ATLAS_OWNER_USER_ID: string;
+  ATLAS_CONTROL_PASSWORD: string;
   RUNTIME_READ_URL?: string;
   APPROVAL_RELAY_URL?: string;
 }
 
-const DASHBOARD_BUILD_ID = "2026.08.09-promotion-automation-02";
+const DASHBOARD_BUILD_ID = "2026.08.09-promotion-automation-03";
 const MAX_RUNTIME_PAYLOAD_BYTES = 65_536;
+const MAX_FAILED_PASSWORD_ATTEMPTS = 5;
+const PASSWORD_WINDOW_MS = 15 * 60 * 1000;
 
 const runtimeFields = new Set([
   "updated_at", "first_observation_at", "last_full_cycle_at", "last_decision_status",
@@ -329,13 +331,6 @@ async function enablementApi(request: Request, env: WorkerEnv): Promise<Response
   }
   if (request.method !== "POST") return jsonResponse({ error: "method not allowed" }, 405);
 
-  const ownerUserId = request.headers.get("oai-authenticated-user-id");
-  if (!(await sameIdentity(ownerUserId, env.ATLAS_OWNER_USER_ID))) {
-    return jsonResponse(
-      { error: "owner authentication required", sign_in_required: !ownerUserId },
-      403,
-    );
-  }
   let input: unknown;
   try {
     input = await readBoundedJson(request);
@@ -347,6 +342,25 @@ async function enablementApi(request: Request, env: WorkerEnv): Promise<Response
     return jsonResponse({ error: "invalid approval" }, 400);
   }
   const command = input as Record<string, unknown>;
+  const attemptKey = request.headers.get("cf-connecting-ip") ?? "unknown";
+  const windowStart = new Date(Date.now() - PASSWORD_WINDOW_MS).toISOString();
+  const recentFailures = await env.DB.prepare(
+    `SELECT COUNT(*) AS count FROM approval_attempts
+      WHERE attempt_key = ? AND success = 0 AND attempted_at >= ?`,
+  ).bind(attemptKey, windowStart).first<{ count: number }>();
+  if (Number(recentFailures?.count ?? 0) >= MAX_FAILED_PASSWORD_ATTEMPTS) {
+    return jsonResponse({ error: "too many password attempts", retry_after_seconds: 900 }, 429);
+  }
+  const passwordAccepted = await sameIdentity(
+    typeof command.password === "string" ? command.password : null,
+    env.ATLAS_CONTROL_PASSWORD,
+  );
+  await env.DB.prepare(
+    `INSERT INTO approval_attempts (attempt_key, attempted_at, success) VALUES (?, ?, ?)`,
+  ).bind(attemptKey, new Date().toISOString(), passwordAccepted ? 1 : 0).run();
+  if (!passwordAccepted) {
+    return jsonResponse({ error: "invalid control password" }, 403);
+  }
   const runtime = await currentRuntime(env);
   if (!runtime) return jsonResponse({ error: "runtime unavailable" }, 409);
   const manualAction = matchingManualAction(runtime, command);
@@ -366,7 +380,7 @@ async function enablementApi(request: Request, env: WorkerEnv): Promise<Response
     authorityId: String(command.authority_id),
     requestedAt: requestedAt.toISOString(),
     expiresAt: expiresAt.toISOString(),
-    approvedBy: String(ownerUserId),
+    approvedBy: "PASSWORD_CONFIRMED_OWNER",
   };
   if (env.APPROVAL_RELAY_URL) {
     const relay = await fetch(env.APPROVAL_RELAY_URL, {
