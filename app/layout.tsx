@@ -30,13 +30,13 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Atlas — автономный торговый агент",
     description: "Результат, готовность, виртуальные позиции и контроль риска.",
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "ATLAS — автономный торговый агент" }],
+    images: [{ url: "/og-agent-value.png", width: 1731, height: 909, alt: "ATLAS — чистый результат после расходов" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "Atlas — автономный торговый агент",
     description: "Результат, готовность, виртуальные позиции и контроль риска.",
-    images: ["/og.png"],
+    images: ["/og-agent-value.png"],
   },
 };
 
