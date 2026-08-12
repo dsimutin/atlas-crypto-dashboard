@@ -32,6 +32,13 @@ type Leader = {
   score_basis?: string;
   eligible_for_live_rank?: boolean;
   profitable_after_costs?: boolean;
+  positive_point_estimate_after_costs?: boolean;
+  trade_count_scope?: string;
+  markets_with_completed_trades?: number;
+  maximum_completed_trades_in_one_market?: number;
+  economically_passed_markets?: string[];
+  demo_eligible_markets?: string[];
+  proof_interpretation?: string;
   evidence_grade?:
     "NEW" | "COLLECTING" | "PROMISING" | "FORWARD_CONFIRMED" | "REJECTED";
   model_kind?: string;
@@ -217,12 +224,17 @@ type Runtime = {
     };
     paper_governor?: {
       total_completed_trades?: number;
+      trade_count_scope?: string;
+      markets_with_completed_trades?: number;
+      maximum_completed_trades_in_one_market?: number;
+      economically_passed_markets?: string[];
       required_completed_trades_per_market?: number;
       minimum_universal_markets?: number;
       universal_ready_markets?: string[];
       terminal_rejection?: boolean;
       forward_oos_confirmation_passed?: boolean;
       decision_state?: string;
+      proof_interpretation?: string;
     };
     symbols?: Record<string, SymbolState>;
   };
@@ -233,7 +245,9 @@ type Runtime = {
     archived_models?: number;
     profitability_status?: string;
     profitable_candidates?: number;
+    positive_point_estimate_candidates?: number;
     validated_profitable_candidates?: number;
+    profitability_count_semantics?: string;
     leaderboard?: Leader[];
     recent_events?: Event[];
   };
@@ -701,7 +715,7 @@ function blockerLabel(blocker: string) {
   if (blocker === "model execution oracles have not passed")
     return "Завершить независимые проверки стабильности и исполнения моделей.";
   if (blocker === "no profitable model currently has a net signal")
-    return "Дождаться нового сигнала прибыльной модели и проверить его без реального ордера.";
+    return "Дождаться нового сигнала доказанной модели и проверить его без реального ордера.";
   if (blocker === "no governed champion has complete forward evidence")
     return "Назначить champion можно только после полного forward-доказательства.";
   return blocker;
@@ -909,6 +923,7 @@ export default function Page() {
   const leaderCompleted =
     leader?.completed_trades ?? governor?.total_completed_trades ?? 0;
   const profitableCandidates =
+    runtime?.factor_model_tournament?.positive_point_estimate_candidates ??
     runtime?.factor_model_tournament?.profitable_candidates ??
     leaderboard.filter(
       (item) => item.profitable_after_costs ?? (item.portfolio_return ?? 0) > 0,
@@ -919,6 +934,19 @@ export default function Page() {
   );
   const validatedProfitableCandidates =
     runtime?.factor_model_tournament?.validated_profitable_candidates ?? 0;
+  const leaderMarketsWithTrades =
+    leader?.markets_with_completed_trades ??
+    governor?.markets_with_completed_trades ??
+    0;
+  const leaderMaximumLaneTrades =
+    leader?.maximum_completed_trades_in_one_market ??
+    governor?.maximum_completed_trades_in_one_market ??
+    0;
+  const leaderEconomicallyPassedMarkets =
+    leader?.economically_passed_markets ??
+    governor?.economically_passed_markets ??
+    [];
+  const leaderDemoEligibleMarkets = leader?.demo_eligible_markets ?? [];
   const activeStrategies =
     runtime?.factor_model_tournament?.active_models ?? leaderboard.length;
   const sourcesOk =
@@ -1238,17 +1266,19 @@ export default function Page() {
                       {pct(leaderReturn)}
                     </strong>
                     <p>
-                      Лидер {leaderName}: {number(leaderCompleted)} виртуальных
-                      сделок. Предварительно прибыльных: {number(profitableCandidates)},
-                      подтверждённых: {number(validatedProfitableCandidates)}.
+                      Лидер {leaderName}: {number(leaderCompleted)} сделок суммарно
+                      по {number(leaderMarketsWithTrades)} рынкам; максимум на одном
+                      рынке — {number(leaderMaximumLaneTrades)}. Положительных
+                      оценок: {number(profitableCandidates)}, доказанных: {number(validatedProfitableCandidates)}.
                     </p>
                   </div>
                 </article>
               </div>
               <p className="truthNote">
-                Положительный кандидат ещё не равен допущенной стратегии. Поэтому
-                уровень 3 может показывать результат, когда уровни 1 и 2 остаются
-                нулевыми.
+                Суммарное число сделок нельзя использовать как доказательство
+                одной торговой связки. Допуск считается отдельно для каждой
+                модели × рынка; сейчас economic gates прошли {number(leaderEconomicallyPassedMarkets.length)},
+                в Demo допущено {number(leaderDemoEligibleMarkets.length)}.
               </p>
             </section>
 
@@ -1256,7 +1286,7 @@ export default function Page() {
               <div className="sectionHead">
                 <div>
                   <span className="eyebrow">ГДЕ ПРИБЫЛЬНЫЕ МОДЕЛИ</span>
-                  <h2>Положительные кандидаты до полного допуска</h2>
+                  <h2>Положительные оценки, ещё не доказанные стратегии</h2>
                 </div>
                 <Badge
                   status={profitableModels.length > 0 ? "PROMISING" : "COLLECTING_DATA"}
@@ -1264,9 +1294,10 @@ export default function Page() {
                 />
               </div>
               <p className="note">
-                Здесь показан каждый кандидат с положительным виртуальным
-                результатом и хотя бы одной закрытой сделкой. Это не общий
-                портфель и не обещание доходности.
+                Здесь положительный знак означает только итоговую точечную оценку
+                после расходов. Сделки могут быть собраны по разным монетам; до
+                допуска хотя бы одна заранее зарегистрированная связка должна
+                отдельно пройти статистику, просадку и проверку исполнения.
               </p>
               {profitableModels.length === 0 ? (
                 <p className="empty">
@@ -1297,7 +1328,9 @@ export default function Page() {
                           </strong>
                         </div>
                         <div className="profitableModelFacts">
-                          <span>{number(item.completed_trades)} сделок</span>
+                          <span>
+                            {number(item.completed_trades)} суммарно · максимум {number(item.maximum_completed_trades_in_one_market)} на рынке
+                          </span>
                           <span>{forwardStatus(modelStatus)}</span>
                         </div>
                         <p>
@@ -1306,7 +1339,7 @@ export default function Page() {
                             : item.forward_oos_confirmation_passed
                               ? "Forward пройден, но текущий портфельный допуск ещё не выдан."
                               : markets.length === 0
-                                ? "Не допущена: ни один рынок ещё не прошёл все economic и forward gates."
+                                ? `Не допущена: доказанных рынков ${number(item.economically_passed_markets?.length)}, Demo-рынков ${number(item.demo_eligible_markets?.length)}.`
                                 : "Не допущена: forward-доказательство ещё не завершено."}
                         </p>
                       </article>
@@ -1484,7 +1517,7 @@ export default function Page() {
                 {validatedProfitableCandidates > 0
                   ? "Проверяет подтверждённые модели перед следующим решением"
                   : profitableCandidates > 0
-                    ? "Укрепляет доказательства предварительно прибыльных моделей"
+                    ? "Проверяет модели с положительной предварительной оценкой"
                     : "Ищет прибыльные модели после расходов"}
               </h2>
               <div className="decisionGrid">
@@ -2094,7 +2127,7 @@ export default function Page() {
                                   }
                                   label={
                                     profitable
-                                      ? "№1, пока прибыльна"
+                                      ? "№1, оценка положительна"
                                       : "№1 по score, пока убыточна"
                                   }
                                 />
@@ -2108,7 +2141,12 @@ export default function Page() {
                           </strong>
                         </div>
                         <div className="candidateMetrics">
-                          <span>{number(item.completed_trades)} сделок</span>
+                          <span>
+                            {number(item.completed_trades)} суммарно по {number(item.markets_with_completed_trades)} рынкам
+                          </span>
+                          <span>
+                            Максимум {number(item.maximum_completed_trades_in_one_market)} на одном рынке
+                          </span>
                           <span>
                             Просадка {dd(item.portfolio_max_drawdown)}
                           </span>
@@ -2125,6 +2163,11 @@ export default function Page() {
                           <p>
                             Internal state:{" "}
                             {item.status ?? item.decision_state ?? "—"}
+                          </p>
+                          <p>
+                            Proof: {item.proof_interpretation ?? "—"}; economic markets:{" "}
+                            {item.economically_passed_markets?.join(", ") || "none"}; Demo markets:{" "}
+                            {item.demo_eligible_markets?.join(", ") || "none"}
                           </p>
                           <p>
                             Expression: <code>{item.expression ?? "—"}</code>

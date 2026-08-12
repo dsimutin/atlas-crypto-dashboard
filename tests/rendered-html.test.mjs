@@ -156,7 +156,7 @@ test("keeps the home page focused on profit evidence and next action", async () 
     "Допущенный SHADOW-портфель",
     "Исследовательские кандидаты",
     "ГДЕ ПРИБЫЛЬНЫЕ МОДЕЛИ",
-    "Положительные кандидаты до полного допуска",
+    "Положительные оценки, ещё не доказанные стратегии",
     "Только допущенные стратегии вместе",
     "На реальных деньгах",
     "Проверка результата",
@@ -171,7 +171,9 @@ test("keeps the home page focused on profit evidence and next action", async () 
   assert.match(home, /Результат до расходов/);
   assert.match(home, /Комиссии и funding/);
   assert.match(home, /не складывает проценты отдельных моделей/);
-  assert.match(home, /ни один рынок ещё не прошёл все economic и forward gates/);
+  assert.match(home, /сделок суммарно/);
+  assert.match(home, /максимум на одном/);
+  assert.match(home, /доказанных рынков/);
   assert.match(
     home,
     /это результат виртуальной проверки, а не\s+заработок пользователя/,
