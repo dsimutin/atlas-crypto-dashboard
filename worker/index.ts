@@ -9,11 +9,11 @@ import handler from "vinext/server/app-router-entry";
 interface WorkerEnv extends Env {
   RUNTIME_SYNC_TOKEN: string;
   ATLAS_CONTROL_PASSWORD: string;
-  RUNTIME_READ_URL?: string;
+  RUNTIME_READ_URL: string;
   APPROVAL_RELAY_URL?: string;
 }
 
-const DASHBOARD_BUILD_ID = "2026.08.09-runtime-health-04";
+const DASHBOARD_BUILD_ID = "2026.08.12-demo-trading-01";
 const MAX_RUNTIME_PAYLOAD_BYTES = 65_536;
 const MAX_FAILED_PASSWORD_ATTEMPTS = 5;
 const PASSWORD_WINDOW_MS = 15 * 60 * 1000;
@@ -125,6 +125,7 @@ const runtimeFields = new Set([
   "model_winner_notification",
   "trading_gate_audit",
   "champion_governance",
+  "research_demo_governance",
   "startup_reconciliation_status",
   "startup_reconciliation_checked_at",
   "startup_open_orders",
@@ -225,6 +226,47 @@ function jsonResponse(value: unknown, status = 200): Response {
   });
 }
 
+async function ensureDatabase(env: WorkerEnv): Promise<void> {
+  const db = env.DB;
+  await db.batch([
+    db.prepare(
+      `CREATE TABLE IF NOT EXISTS runtime_status (
+        id INTEGER PRIMARY KEY,
+        payload TEXT NOT NULL,
+        received_at TEXT NOT NULL
+      )`,
+    ),
+    db.prepare(
+      `CREATE TABLE IF NOT EXISTS approval_requests (
+        id TEXT PRIMARY KEY,
+        action TEXT NOT NULL,
+        request_id TEXT NOT NULL,
+        authority_id TEXT NOT NULL,
+        requested_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        approved_by TEXT NOT NULL,
+        status TEXT NOT NULL
+      )`,
+    ),
+    db.prepare(
+      `CREATE TABLE IF NOT EXISTS approval_attempts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        attempt_key TEXT NOT NULL,
+        attempted_at TEXT NOT NULL,
+        success INTEGER NOT NULL
+      )`,
+    ),
+    db.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_approval_attempts_key_time
+       ON approval_attempts(attempt_key, attempted_at)`,
+    ),
+    db.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_approval_requests_status_time
+       ON approval_requests(status, requested_at)`,
+    ),
+  ]);
+}
+
 type ImageOutputFormat =
   | "image/jpeg"
   | "image/avif"
@@ -313,6 +355,7 @@ async function runtimeApi(request: Request, env: WorkerEnv): Promise<Response> {
       }
       return jsonResponse(payload);
     }
+    await ensureDatabase(env);
     const row = await env.DB.prepare(
       "SELECT payload, received_at AS receivedAt FROM runtime_status WHERE id = 1",
     ).first<{ payload: string; receivedAt: string }>();
@@ -326,6 +369,7 @@ async function runtimeApi(request: Request, env: WorkerEnv): Promise<Response> {
   }
   if (request.method !== "POST")
     return jsonResponse({ error: "method not allowed" }, 405);
+  await ensureDatabase(env);
   const authorization = request.headers.get("Authorization");
   if (!(await verifyBearerToken(authorization, env.RUNTIME_SYNC_TOKEN))) {
     return jsonResponse({ error: "unauthorized" }, 401);
@@ -410,6 +454,7 @@ async function currentRuntime(
       ? payload
       : null;
   }
+  await ensureDatabase(env);
   const row = await env.DB.prepare(
     "SELECT payload FROM runtime_status WHERE id = 1",
   ).first<{ payload: string }>();
@@ -471,6 +516,7 @@ async function enablementApi(
   request: Request,
   env: WorkerEnv,
 ): Promise<Response> {
+  await ensureDatabase(env);
   if (request.method === "GET") {
     if (
       !(await verifyBearerToken(
@@ -617,6 +663,7 @@ async function approvalRelayApi(
   request: Request,
   env: WorkerEnv,
 ): Promise<Response> {
+  await ensureDatabase(env);
   if (request.method !== "POST")
     return jsonResponse({ error: "method not allowed" }, 405);
   if (

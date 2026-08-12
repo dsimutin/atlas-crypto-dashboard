@@ -425,6 +425,75 @@ main {
   color: var(--gold);
   font-size: 13px;
 }
+.modeNotice.demoActive {
+  background: rgba(114, 211, 154, 0.11);
+  color: var(--green);
+  border: 1px solid rgba(114, 211, 154, 0.22);
+}
+.demoConsole {
+  border: 1px solid rgba(114, 211, 154, 0.2);
+  background:
+    radial-gradient(circle at 100% 0, rgba(114, 211, 154, 0.09), transparent 34%),
+    var(--surface);
+}
+.demoConsole > .note {
+  margin-top: 14px;
+}
+.demoMetrics,
+.demoPositionGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
+  margin-top: 22px;
+}
+.demoPositions {
+  display: grid;
+  gap: 12px;
+  margin-top: 22px;
+}
+.demoPosition {
+  padding: 20px;
+  border-radius: 17px;
+  background: linear-gradient(140deg, #152620, #101b18);
+  border: 1px solid rgba(114, 211, 154, 0.18);
+}
+.demoPositionTitle {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+.demoPositionTitle h3 {
+  margin: 7px 0 0;
+  font-size: 28px;
+}
+.demoWaiting {
+  display: grid;
+  gap: 6px;
+  margin-top: 22px;
+  padding: 18px;
+  border-radius: 15px;
+  background: var(--surface2);
+}
+.demoWaiting span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.demoSafety {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 20px;
+  padding-top: 15px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+}
+.demoSafety strong {
+  margin-left: auto;
+  color: var(--green);
+}
 .tradeSummary {
   grid-template-columns: repeat(3, 1fr);
   padding: 5px 4px;
@@ -1571,7 +1640,9 @@ main {
 @media (max-width: 520px) {
   .trialGrid,
   .experimentMetrics,
-  .profitableModelGrid {
+  .profitableModelGrid,
+  .demoMetrics,
+  .demoPositionGrid {
     grid-template-columns: 1fr;
   }
   .experimentHead {

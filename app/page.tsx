@@ -66,6 +66,31 @@ type RuntimeLifecycleEvent = {
   pid?: number;
   planned?: boolean;
 };
+type DemoPosition = {
+  symbol?: string;
+  side?: string;
+  quantity?: string;
+  stop_loss?: string;
+  take_profit?: string;
+  entry_price?: string;
+  risk_usdt?: string;
+  owner?: string;
+  strategy_id?: string;
+  opened_at?: string;
+};
+type DemoExperiment = DemoPosition & {
+  status?: string;
+  checked_at?: string;
+  open_positions?: number;
+  open_orders?: number;
+  experiments_today?: number;
+  risk_scale?: string;
+  portfolio_risk_usdt?: string;
+  venue_fill_events_recorded?: number;
+  venue_evidence_status?: string;
+  positions?: DemoPosition[];
+  mainnet_allowed?: boolean;
+};
 type ForwardTrial = {
   status?: string;
   completed_trades?: number;
@@ -185,6 +210,7 @@ type Runtime = {
   demo_open_orders?: number;
   demo_open_positions?: number;
   demo_orders_total?: number;
+  demo_experiment?: DemoExperiment;
   full_system_audit?: {
     status?: string;
     public_observation_status?: string;
@@ -387,6 +413,7 @@ type Runtime = {
   };
   venue_execution_evidence?: {
     status?: string;
+    observed_fill_events?: number;
     completed_fills?: number;
     partial_fills?: number;
     rejects?: number;
@@ -411,6 +438,9 @@ type Runtime = {
     retry_hours?: number;
   };
   promotion_automation?: {
+    execution_mode?: string;
+    research_candidate_id?: string | null;
+    research_demo_owner_policy_active?: boolean;
     stage?: string;
     requires_attention?: boolean;
     blockers?: string[];
@@ -435,6 +465,20 @@ type Runtime = {
       execution_available?: boolean;
       mainnet_allowed?: boolean;
     };
+  };
+  research_demo_governance?: {
+    status?: string;
+    candidate_name?: string;
+    cohort_model_ids?: string[];
+    allowed_markets?: string[];
+    completed_trades_at_selection?: number;
+    portfolio_return_at_selection?: number;
+    evidence_use?: string;
+    maximum_open_positions?: number;
+    maximum_new_experiments_per_day?: number;
+    risk_fraction_per_trade?: string;
+    profitability_proven?: boolean;
+    mainnet_allowed?: boolean;
   };
   notification_history?: Event[];
   research_hypothesis_lifecycle?: {
@@ -569,7 +613,7 @@ const money = (value?: string | number | null) =>
     : `${Number(value).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 4 })} USDT`;
 const coin = (value: string) => value.replace("USDT", "");
 const price = (value?: number | null) =>
-  value == null
+  value == null || !Number.isFinite(value)
     ? "—"
     : value.toLocaleString("ru-RU", {
         maximumFractionDigits: value < 1 ? 6 : 2,
@@ -1032,6 +1076,29 @@ export default function Page() {
     (age ?? 999) < 180;
   const stale = (age ?? 0) >= 180 || (sourcesOk && !sourcesFresh);
   const automation = runtime?.promotion_automation;
+  const demo = runtime?.demo_experiment;
+  const demoGovernance = runtime?.research_demo_governance;
+  const demoEvidence = runtime?.venue_execution_evidence;
+  const demoPositions = demo?.positions?.length
+    ? demo.positions
+    : demo?.open_positions
+      ? [demo]
+      : [];
+  const demoActive =
+    automation?.stage === "RESEARCH_DEMO_ACTIVE" ||
+    automation?.stage === "LIMITED_DEMO_ACTIVE";
+  const demoStatusLabels: Record<string, string> = {
+    EXPERIMENT_OPENED: "Позиция открыта и защищена",
+    MANAGING_POSITION: "Позиция под управлением",
+    MANAGING_PORTFOLIO: "Demo-портфель под управлением",
+    WAITING_FOR_IDEA: "Ждёт следующий сигнал",
+    COOLDOWN: "Пауза между экспериментами",
+    DAILY_SAMPLE_COMPLETE: "Дневной технический предел достигнут",
+    RELEASE_GATE_BLOCKED: "Новые входы временно заблокированы",
+  };
+  const demoStatusLabel =
+    demoStatusLabels[demo?.status ?? ""] ??
+    (demoActive ? "Автономный Demo-контур активен" : "Demo-контур готовится");
   const manualAction = automation?.manual_action;
   const mainStatus = automation?.requires_attention
     ? { title: "Atlas ждёт вашего решения", tone: "warning" as Tone }
@@ -1645,16 +1712,114 @@ export default function Page() {
           <div className="page">
             <div className="pageTitle">
               <span className="eyebrow">ТОРГОВЛЯ</span>
-              <h1>Сделки ведущей модели</h1>
+              <h1>Торговля на Demo и виртуальная проверка</h1>
               <p>
-                Здесь показана виртуальная работа модели {leaderName}. Реальные
-                деньги не используются.
+                Demo — настоящие тестовые ордера на Bybit без реальных денег.
+                Ниже отдельно показана виртуальная статистика моделей.
               </p>
             </div>
-            <div className="modeNotice">
-              <b>Виртуальный режим</b>
-              <span>Реальные ордера не отправляются</span>
+            <div className={`modeNotice ${demoActive ? "demoActive" : ""}`}>
+              <b>{demoActive ? "Bybit Demo активна" : "Demo ожидает допуска"}</b>
+              <span>Mainnet и реальные деньги выключены</span>
             </div>
+            <section className="section demoConsole">
+              <div className="sectionHead">
+                <div>
+                  <span className="eyebrow">DEMO TRADING</span>
+                  <h2>{demoStatusLabel}</h2>
+                </div>
+                <Badge
+                  status={demoActive ? "HEALTHY" : "INSUFFICIENT_EVIDENCE"}
+                  label={demoActive ? "Автоматически" : "Не торгует"}
+                />
+              </div>
+              <p className="note">
+                Atlas сам выбирает кандидата, ждёт его сигнал, отправляет
+                тестовый ордер и проверяет защиту. Решение пользователя нужно
+                только перед реальными деньгами.
+              </p>
+              <div className="demoMetrics">
+                <Metric
+                  label="Кандидат"
+                  value={demoGovernance?.candidate_name ?? modelLabel(demo?.strategy_id)}
+                  hint={`${number(demoGovernance?.completed_trades_at_selection)} SHADOW-сделок при выборе`}
+                />
+                <Metric
+                  label="Разрешённые рынки"
+                  value={(demoGovernance?.allowed_markets ?? []).map(coin).join(", ") || "—"}
+                  hint="Только положительные незаблокированные ветки"
+                />
+                <Metric
+                  label="Demo fill-события"
+                  value={number(demoEvidence?.observed_fill_events)}
+                  hint={`Проскальзывание: ${demoEvidence?.mean_absolute_slippage_bps ?? "—"} bps`}
+                />
+                <Metric
+                  label="Лимит потока"
+                  value={`до ${number(automation?.demo_enablement?.maximum_new_experiments_per_day)} / сутки`}
+                  hint={`до ${number(automation?.demo_enablement?.maximum_open_positions)} позиций одновременно`}
+                />
+              </div>
+              {demoPositions.length > 0 ? (
+                <div className="demoPositions">
+                  {demoPositions.map((positionItem, index) => (
+                    <article
+                      className="demoPosition"
+                      key={`${positionItem.symbol ?? "demo"}-${index}`}
+                    >
+                      <div className="demoPositionTitle">
+                        <div>
+                          <span className="eyebrow">ОТКРЫТАЯ DEMO-ПОЗИЦИЯ</span>
+                          <h3>{coin(positionItem.symbol ?? "—")}</h3>
+                        </div>
+                        <Badge
+                          status={positionItem.side === "Buy" ? "ACTIVE" : "PROMISING"}
+                          label={positionItem.side === "Buy" ? "LONG" : "SHORT"}
+                        />
+                      </div>
+                      <div className="demoPositionGrid">
+                        <Metric label="Вход" value={price(Number(positionItem.entry_price))} />
+                        <Metric label="Количество" value={positionItem.quantity ?? "—"} />
+                        <Metric label="Риск" value={money(positionItem.risk_usdt)} tone="warning" />
+                        <Metric label="Stop loss" value={price(Number(positionItem.stop_loss))} />
+                        <Metric label="Take profit" value={price(Number(positionItem.take_profit))} />
+                        <Metric
+                          label="В позиции"
+                          value={
+                            positionItem.opened_at
+                              ? duration(
+                                  Math.max(
+                                    0,
+                                    Math.floor(
+                                      (now - new Date(positionItem.opened_at).getTime()) / 1000,
+                                    ),
+                                  ),
+                                )
+                              : "—"
+                          }
+                          hint="Максимум 30 минут"
+                        />
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="demoWaiting">
+                  <b>Открытых Demo-позиций сейчас нет</b>
+                  <span>
+                    Следующий ордер появится автоматически при новом сигнале
+                    фиксированного кандидата.
+                  </span>
+                </div>
+              )}
+              <div className="demoSafety">
+                <span>
+                  Риск одной сделки: {money(Number(automation?.demo_enablement?.risk_fraction_per_trade ?? 0) * 300)}
+                </span>
+                <span>Комиссии: {money(demoEvidence?.actual_fees_usdt)}</span>
+                <strong>Реальные деньги: ВЫКЛЮЧЕНЫ</strong>
+              </div>
+            </section>
             <section className="orientationNotice">
               <b>На что смотреть</b>
               <p>
@@ -1685,7 +1850,7 @@ export default function Page() {
               />
             </section>
             <section className="section">
-              <h2>Открытые виртуальные позиции</h2>
+              <h2>Открытые SHADOW-позиции</h2>
               <p className="note">
                 Результат позиции меняется до её закрытия. Он показан для
                 наблюдения, а не как доказанная прибыль.
@@ -2318,8 +2483,9 @@ export default function Page() {
               <span className="eyebrow">НАСТРОЙКИ</span>
               <h1>Режим и безопасность</h1>
               <p>
-                Здесь владелец принимает два отдельных решения: ограниченное
-                Demo и, значительно позже, реальные деньги.
+                Demo запускается автоматически для допущенных кандидатов.
+                Здесь его можно аварийно остановить; отдельное решение владельца
+                требуется только для реальных денег.
               </p>
             </div>
             <section className="section settingsHero">
@@ -2361,8 +2527,8 @@ export default function Page() {
             >
               <div className="sectionHead">
                 <div>
-                  <span className="eyebrow">ПЕРВЫЙ РУЧНОЙ ЗАМОК</span>
-                  <h2>Ограниченное Demo</h2>
+                  <span className="eyebrow">АВТОНОМНЫЙ ТЕСТОВЫЙ КОНТУР</span>
+                  <h2>Автоматическое Demo</h2>
                 </div>
                 <Badge
                   status={
@@ -2415,7 +2581,7 @@ export default function Page() {
               {!automation?.demo_enablement?.enabled &&
                 manualAction?.action !== "ENABLE_LIMITED_DEMO" && (
                   <button className="launchButton" type="button" disabled>
-                    Включить ограниченное Demo
+                    Demo запустится автоматически после допуска
                   </button>
                 )}
             </section>
@@ -2425,7 +2591,7 @@ export default function Page() {
             >
               <div className="sectionHead">
                 <div>
-                  <span className="eyebrow">ВТОРОЙ РУЧНОЙ ЗАМОК</span>
+                  <span className="eyebrow">ЕДИНСТВЕННЫЙ РУЧНОЙ ДОПУСК</span>
                   <h2>Реальные деньги</h2>
                 </div>
                 <Badge

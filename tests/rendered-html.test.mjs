@@ -48,7 +48,8 @@ test("includes guarded owner controls and a prominent readiness alarm", async ()
     new URL("../worker/index.ts", import.meta.url),
     "utf8",
   );
-  assert.match(source, /Включить ограниченное Demo/);
+  assert.match(source, /Demo запустится автоматически после допуска/);
+  assert.match(source, /ЕДИНСТВЕННЫЙ РУЧНОЙ ДОПУСК/);
   assert.match(source, /Включить реальные деньги/);
   assert.match(source, /ТРЕБУЕТСЯ РЕШЕНИЕ ВЛАДЕЛЬЦА/);
   assert.match(source, /Да, подтверждаю/);
@@ -228,11 +229,40 @@ test("explains which trading metric the owner should use", async () => {
     source.indexOf('{tab === "trading"'),
     source.indexOf('{tab === "learning"'),
   );
-  assert.match(trading, /Сделки ведущей модели/);
+  assert.match(trading, /Торговля на Demo и виртуальная проверка/);
   assert.match(trading, /На что смотреть/);
   assert.match(trading, /итог закрытых сделок\s+ведущей модели/);
   assert.match(trading, /временные и не\s+являются итоговой прибылью/);
   assert.doesNotMatch(trading, /label="Общий результат"/);
+});
+
+test("shows autonomous Demo trading separately from SHADOW and Mainnet", async () => {
+  const source = await readFile(
+    new URL("../app/page.tsx", import.meta.url),
+    "utf8",
+  );
+  const worker = await readFile(
+    new URL("../worker/index.ts", import.meta.url),
+    "utf8",
+  );
+  const trading = source.slice(
+    source.indexOf('{tab === "trading"'),
+    source.indexOf('{tab === "learning"'),
+  );
+  for (const label of [
+    "DEMO TRADING",
+    "Bybit Demo активна",
+    "ОТКРЫТАЯ DEMO-ПОЗИЦИЯ",
+    "Demo fill-события",
+    "Реальные деньги: ВЫКЛЮЧЕНЫ",
+    "Открытые SHADOW-позиции",
+  ]) {
+    assert.match(trading, new RegExp(label));
+  }
+  assert.match(source, /research_demo_governance/);
+  assert.match(worker, /"research_demo_governance"/);
+  assert.match(worker, /CREATE TABLE IF NOT EXISTS runtime_status/);
+  assert.match(worker, /idx_approval_attempts_key_time/);
 });
 
 test("shows research-agent usefulness instead of raw activity", async () => {
