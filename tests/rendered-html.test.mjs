@@ -255,6 +255,9 @@ test("shows autonomous Demo trading separately from SHADOW and Mainnet", async (
     "ОТКРЫТАЯ DEMO-ПОЗИЦИЯ",
     "ЗАКРЫТАЯ DEMO-СДЕЛКА",
     "Реализованный Demo PnL",
+    "Два разных Demo-уровня больше не смешиваются",
+    "Research Demo:",
+    "доказанный портфельный Demo:",
     "Почему сейчас нет нового ордера",
     "Реальные деньги: ВЫКЛЮЧЕНЫ",
     "Открытые SHADOW-позиции",
@@ -262,11 +265,14 @@ test("shows autonomous Demo trading separately from SHADOW and Mainnet", async (
     assert.match(trading, new RegExp(label));
   }
   assert.match(source, /research_demo_governance/);
+  assert.match(source, /research_demo_execution/);
   assert.match(worker, /"research_demo_governance"/);
+  assert.match(worker, /"research_demo_execution"/);
   assert.match(worker, /CREATE TABLE IF NOT EXISTS runtime_status/);
   assert.match(worker, /idx_approval_attempts_key_time/);
   assert.match(worker, /"execution_allowed"/);
   assert.match(worker, /"demo_allowed"/);
+  assert.match(worker, /"research_demo_allowed"/);
   assert.match(worker, /"mainnet_allowed"/);
 });
 

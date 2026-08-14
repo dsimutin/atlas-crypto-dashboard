@@ -13,7 +13,7 @@ interface WorkerEnv extends Env {
   APPROVAL_RELAY_URL?: string;
 }
 
-const DASHBOARD_BUILD_ID = "2026.08.14-demo-roundtrip-02";
+const DASHBOARD_BUILD_ID = "2026.08.14-demo-roundtrip-03";
 const MAX_RUNTIME_PAYLOAD_BYTES = 65_536;
 const MAX_FAILED_PASSWORD_ATTEMPTS = 5;
 const PASSWORD_WINDOW_MS = 15 * 60 * 1000;
@@ -22,6 +22,7 @@ const runtimeFields = new Set([
   "updated_at",
   "execution_allowed",
   "demo_allowed",
+  "research_demo_allowed",
   "mainnet_allowed",
   "first_observation_at",
   "last_full_cycle_at",
@@ -129,6 +130,7 @@ const runtimeFields = new Set([
   "trading_gate_audit",
   "champion_governance",
   "research_demo_governance",
+  "research_demo_execution",
   "startup_reconciliation_status",
   "startup_reconciliation_checked_at",
   "startup_open_orders",

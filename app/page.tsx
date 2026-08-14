@@ -174,6 +174,9 @@ type Runtime = {
   risk_budget_usdt?: string;
   source_status?: Record<string, string>;
   execution_network_available?: boolean;
+  execution_allowed?: boolean;
+  demo_allowed?: boolean;
+  mainnet_allowed?: boolean;
   source_last_message_at?: Record<string, string | null>;
   runtime_health?: {
     sampled_at?: string;
@@ -230,6 +233,18 @@ type Runtime = {
   demo_open_positions?: number;
   demo_orders_total?: number;
   demo_experiment?: DemoExperiment;
+  research_demo_allowed?: boolean;
+  research_demo_execution?: {
+    status?: string;
+    demo_allowed?: boolean;
+    validated_portfolio_demo_allowed?: boolean;
+    mainnet_allowed?: boolean;
+    candidate_id?: string | null;
+    candidate_name?: string;
+    allowed_markets?: string[];
+    release_gate_checked_at?: string;
+    blockers?: string[];
+  };
   full_system_audit?: {
     status?: string;
     public_observation_status?: string;
@@ -1116,6 +1131,7 @@ export default function Page() {
   const automation = runtime?.promotion_automation;
   const demo = runtime?.demo_experiment;
   const demoGovernance = runtime?.research_demo_governance;
+  const researchDemoExecution = runtime?.research_demo_execution;
   const demoEvidence = runtime?.venue_execution_evidence;
   const demoTrading = demoEvidence?.demo_trading;
   const demoRoundTrips = demoTrading?.recent_round_trips ?? [];
@@ -1135,7 +1151,9 @@ export default function Page() {
     "RELEASE_GATE_BLOCKED",
   ]);
   const demoOperational =
-    demoEnabled && !demoBlockedStatuses.has(demo?.status ?? "");
+    demoEnabled &&
+    researchDemoExecution?.demo_allowed === true &&
+    !demoBlockedStatuses.has(demo?.status ?? "");
   const demoStatusLabels: Record<string, string> = {
     EXPERIMENT_OPENED: "Позиция открыта и защищена",
     MANAGING_POSITION: "Позиция под управлением",
@@ -1800,6 +1818,14 @@ export default function Page() {
                 тестовый ордер и проверяет защиту. Решение пользователя нужно
                 только перед реальными деньгами.
               </p>
+              <div className="demoWaiting">
+                <b>Два разных Demo-уровня больше не смешиваются</b>
+                <span>
+                  Research Demo: {researchDemoExecution?.demo_allowed ? "РАЗРЕШЁН" : "ЗАБЛОКИРОВАН"} ·
+                  доказанный портфельный Demo: {runtime?.demo_allowed ? "РАЗРЕШЁН" : "ЕЩЁ НЕ ДОКАЗАН"} ·
+                  Mainnet: ВЫКЛЮЧЕН
+                </span>
+              </div>
               {demo?.reason || demo?.blockers?.length ? (
                 <div className="demoWaiting">
                   <b>Почему сейчас нет нового ордера</b>
