@@ -1150,9 +1150,12 @@ export default function Page() {
     "ERROR",
     "RELEASE_GATE_BLOCKED",
   ]);
+  const researchDemoAllowed =
+    researchDemoExecution?.demo_allowed ??
+    (demoEnabled && !demoBlockedStatuses.has(demo?.status ?? ""));
   const demoOperational =
     demoEnabled &&
-    researchDemoExecution?.demo_allowed === true &&
+    researchDemoAllowed &&
     !demoBlockedStatuses.has(demo?.status ?? "");
   const demoStatusLabels: Record<string, string> = {
     EXPERIMENT_OPENED: "Позиция открыта и защищена",
@@ -1821,7 +1824,7 @@ export default function Page() {
               <div className="demoWaiting">
                 <b>Два разных Demo-уровня больше не смешиваются</b>
                 <span>
-                  Research Demo: {researchDemoExecution?.demo_allowed ? "РАЗРЕШЁН" : "ЗАБЛОКИРОВАН"} ·
+                  Research Demo: {researchDemoAllowed ? "РАЗРЕШЁН" : "ЗАБЛОКИРОВАН"} ·
                   доказанный портфельный Demo: {runtime?.demo_allowed ? "РАЗРЕШЁН" : "ЕЩЁ НЕ ДОКАЗАН"} ·
                   Mainnet: ВЫКЛЮЧЕН
                 </span>
