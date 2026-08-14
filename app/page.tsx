@@ -1187,6 +1187,7 @@ export default function Page() {
     MANAGING_POSITION: "Позиция под управлением",
     MANAGING_PORTFOLIO: "Demo-портфель под управлением",
     WAITING_FOR_IDEA: "Ждёт следующий сигнал",
+    WAITING_FOR_NEW_SIGNAL_EPISODE: "Ждёт новый независимый сигнал",
     COOLDOWN: "Пауза между экспериментами",
     DAILY_SAMPLE_COMPLETE: "Дневной технический предел достигнут",
     RELEASE_GATE_BLOCKED: "Новые входы временно заблокированы",
