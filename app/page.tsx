@@ -89,7 +89,26 @@ type DemoExperiment = DemoPosition & {
   venue_fill_events_recorded?: number;
   venue_evidence_status?: string;
   positions?: DemoPosition[];
+  reason?: string;
+  blockers?: string[];
+  pending_closure_evidence?: number;
   mainnet_allowed?: boolean;
+};
+type DemoRoundTrip = {
+  intent_id?: string;
+  strategy_id?: string;
+  symbol?: string;
+  side?: string;
+  quantity?: string;
+  opened_at?: string;
+  closed_at?: string;
+  entry_price?: string;
+  exit_price?: string;
+  gross_pnl_usdt?: string;
+  fees_usdt?: string;
+  net_pnl_usdt?: string;
+  return_on_notional?: string;
+  close_reason?: string;
 };
 type ForwardTrial = {
   status?: string;
@@ -424,6 +443,25 @@ type Runtime = {
     discrete_funding_events?: number;
     queue_position_observations?: number;
     blockers?: string[];
+    entry_fill_events?: number;
+    exit_fill_events?: number;
+    unclassified_legacy_fill_events?: number;
+    demo_trading?: {
+      completed_round_trips?: number;
+      open_trades_with_entry_evidence?: number;
+      partial_closures?: number;
+      profitable_round_trips?: number;
+      losing_round_trips?: number;
+      win_rate?: number | null;
+      realized_gross_pnl_usdt?: string;
+      realized_net_pnl_usdt?: string;
+      profitability_status?: string;
+      by_strategy?: Record<
+        string,
+        { round_trips?: number; net_pnl_usdt?: string }
+      >;
+      recent_round_trips?: DemoRoundTrip[];
+    };
   };
   stall_acceleration?: {
     status?: string;
@@ -1079,14 +1117,25 @@ export default function Page() {
   const demo = runtime?.demo_experiment;
   const demoGovernance = runtime?.research_demo_governance;
   const demoEvidence = runtime?.venue_execution_evidence;
+  const demoTrading = demoEvidence?.demo_trading;
+  const demoRoundTrips = demoTrading?.recent_round_trips ?? [];
   const demoPositions = demo?.positions?.length
     ? demo.positions
     : demo?.open_positions
       ? [demo]
       : [];
-  const demoActive =
+  const demoEnabled =
     automation?.stage === "RESEARCH_DEMO_ACTIVE" ||
     automation?.stage === "LIMITED_DEMO_ACTIVE";
+  const demoBlockedStatuses = new Set([
+    "BROKER_GUARD_BLOCKED",
+    "CANDIDATE_MARKET_DATA_BLOCKED",
+    "DEMO_ENABLEMENT_BLOCKED",
+    "ERROR",
+    "RELEASE_GATE_BLOCKED",
+  ]);
+  const demoOperational =
+    demoEnabled && !demoBlockedStatuses.has(demo?.status ?? "");
   const demoStatusLabels: Record<string, string> = {
     EXPERIMENT_OPENED: "Позиция открыта и защищена",
     MANAGING_POSITION: "Позиция под управлением",
@@ -1095,10 +1144,17 @@ export default function Page() {
     COOLDOWN: "Пауза между экспериментами",
     DAILY_SAMPLE_COMPLETE: "Дневной технический предел достигнут",
     RELEASE_GATE_BLOCKED: "Новые входы временно заблокированы",
+    BROKER_GUARD_BLOCKED: "Сверка с Demo-брокером не пройдена",
+    CANDIDATE_MARKET_DATA_BLOCKED: "Данные рынка кандидата устарели",
+    DEMO_ENABLEMENT_BLOCKED: "Demo-разрешение неактивно",
+    EXIT_PENDING: "Выход отправлен, ждём подтверждение биржи",
+    GOVERNANCE_EXIT_SENT: "Кандидат отозван — позиция закрывается",
+    TIME_EXIT_SENT: "Лимит времени достигнут — позиция закрывается",
+    ERROR: "Ошибка Demo-контура",
   };
   const demoStatusLabel =
     demoStatusLabels[demo?.status ?? ""] ??
-    (demoActive ? "Автономный Demo-контур активен" : "Demo-контур готовится");
+    (demoOperational ? "Автономный Demo-контур активен" : "Demo-контур готовится");
   const manualAction = automation?.manual_action;
   const mainStatus = automation?.requires_attention
     ? { title: "Atlas ждёт вашего решения", tone: "warning" as Tone }
@@ -1718,8 +1774,14 @@ export default function Page() {
                 Ниже отдельно показана виртуальная статистика моделей.
               </p>
             </div>
-            <div className={`modeNotice ${demoActive ? "demoActive" : ""}`}>
-              <b>{demoActive ? "Bybit Demo активна" : "Demo ожидает допуска"}</b>
+            <div className={`modeNotice ${demoOperational ? "demoActive" : ""}`}>
+              <b>
+                {demoOperational
+                  ? "Bybit Demo готова исполнять сигналы"
+                  : demoEnabled
+                    ? "Bybit Demo временно заблокирована"
+                    : "Demo ожидает допуска"}
+              </b>
               <span>Mainnet и реальные деньги выключены</span>
             </div>
             <section className="section demoConsole">
@@ -1729,8 +1791,8 @@ export default function Page() {
                   <h2>{demoStatusLabel}</h2>
                 </div>
                 <Badge
-                  status={demoActive ? "HEALTHY" : "INSUFFICIENT_EVIDENCE"}
-                  label={demoActive ? "Автоматически" : "Не торгует"}
+                  status={demoOperational ? "HEALTHY" : "INSUFFICIENT_EVIDENCE"}
+                  label={demoOperational ? "Автоматически" : "Заблокировано"}
                 />
               </div>
               <p className="note">
@@ -1738,6 +1800,12 @@ export default function Page() {
                 тестовый ордер и проверяет защиту. Решение пользователя нужно
                 только перед реальными деньгами.
               </p>
+              {demo?.reason || demo?.blockers?.length ? (
+                <div className="demoWaiting">
+                  <b>Почему сейчас нет нового ордера</b>
+                  <span>{demo?.reason ?? demo?.blockers?.join("; ")}</span>
+                </div>
+              ) : null}
               <div className="demoMetrics">
                 <Metric
                   label="Кандидат"
@@ -1750,16 +1818,37 @@ export default function Page() {
                   hint="Только положительные незаблокированные ветки"
                 />
                 <Metric
-                  label="Demo fill-события"
-                  value={number(demoEvidence?.observed_fill_events)}
-                  hint={`Проскальзывание: ${demoEvidence?.mean_absolute_slippage_bps ?? "—"} bps`}
+                  label="Закрытые Demo-сделки"
+                  value={number(demoTrading?.completed_round_trips)}
+                  hint={`${number(demoEvidence?.entry_fill_events)} входов · ${number(demoEvidence?.exit_fill_events)} выходов`}
                 />
                 <Metric
-                  label="Лимит потока"
-                  value={`до ${number(automation?.demo_enablement?.maximum_new_experiments_per_day)} / сутки`}
-                  hint={`до ${number(automation?.demo_enablement?.maximum_open_positions)} позиций одновременно`}
+                  label="Реализованный Demo PnL"
+                  value={money(demoTrading?.realized_net_pnl_usdt)}
+                  hint={
+                    demoTrading?.completed_round_trips
+                      ? `Прибыльных: ${number(demoTrading.profitable_round_trips)} · win rate ${pct(demoTrading.win_rate)}`
+                      : "Появится только после подтверждённого выхода"
+                  }
+                  tone={
+                    Number(demoTrading?.realized_net_pnl_usdt ?? 0) > 0
+                      ? "positive"
+                      : Number(demoTrading?.realized_net_pnl_usdt ?? 0) < 0
+                        ? "negative"
+                        : "neutral"
+                  }
                 />
               </div>
+              {(demoEvidence?.unclassified_legacy_fill_events ?? 0) > 0 ? (
+                <div className="demoWaiting">
+                  <b>Старые исполнения исключены из Demo PnL</b>
+                  <span>
+                    {number(demoEvidence?.unclassified_legacy_fill_events)} прежних событий не имеют
+                    надёжной связи «вход → выход». Atlas не выдаёт их за завершённые сделки и не
+                    использует для решения о прибыльности.
+                  </span>
+                </div>
+              ) : null}
               {demoPositions.length > 0 ? (
                 <div className="demoPositions">
                   {demoPositions.map((positionItem, index) => (
@@ -1812,11 +1901,47 @@ export default function Page() {
                   </span>
                 </div>
               )}
+              {demoRoundTrips.length > 0 ? (
+                <div className="demoPositions">
+                  {demoRoundTrips.slice(0, 8).map((trade) => (
+                    <article
+                      className="demoPosition"
+                      key={trade.intent_id ?? `${trade.symbol}-${trade.closed_at}`}
+                    >
+                      <div className="demoPositionTitle">
+                        <div>
+                          <span className="eyebrow">ЗАКРЫТАЯ DEMO-СДЕЛКА</span>
+                          <h3>{coin(trade.symbol ?? "—")}</h3>
+                        </div>
+                        <Badge
+                          status={
+                            Number(trade.net_pnl_usdt ?? 0) > 0
+                              ? "HEALTHY"
+                              : "REJECTED"
+                          }
+                          label={money(trade.net_pnl_usdt)}
+                        />
+                      </div>
+                      <div className="demoPositionGrid">
+                        <Metric label="Направление" value={trade.side ?? "—"} />
+                        <Metric label="Вход" value={price(Number(trade.entry_price))} />
+                        <Metric label="Выход" value={price(Number(trade.exit_price))} />
+                        <Metric label="Комиссии" value={money(trade.fees_usdt)} />
+                        <Metric label="Доходность" value={pct(trade.return_on_notional)} />
+                        <Metric label="Причина выхода" value={trade.close_reason ?? "—"} />
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : null}
               <div className="demoSafety">
                 <span>
                   Риск одной сделки: {money(Number(automation?.demo_enablement?.risk_fraction_per_trade ?? 0) * 300)}
                 </span>
                 <span>Комиссии: {money(demoEvidence?.actual_fees_usdt)}</span>
+                <span>
+                  Поток: до {number(automation?.demo_enablement?.maximum_new_experiments_per_day)} сделок/сутки · до {number(automation?.demo_enablement?.maximum_open_positions)} одновременно
+                </span>
                 <strong>Реальные деньги: ВЫКЛЮЧЕНЫ</strong>
               </div>
             </section>

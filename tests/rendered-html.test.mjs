@@ -251,9 +251,11 @@ test("shows autonomous Demo trading separately from SHADOW and Mainnet", async (
   );
   for (const label of [
     "DEMO TRADING",
-    "Bybit Demo активна",
+    "Bybit Demo готова исполнять сигналы",
     "ОТКРЫТАЯ DEMO-ПОЗИЦИЯ",
-    "Demo fill-события",
+    "ЗАКРЫТАЯ DEMO-СДЕЛКА",
+    "Реализованный Demo PnL",
+    "Почему сейчас нет нового ордера",
     "Реальные деньги: ВЫКЛЮЧЕНЫ",
     "Открытые SHADOW-позиции",
   ]) {
