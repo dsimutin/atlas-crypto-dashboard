@@ -26,6 +26,7 @@ type Leader = {
   status?: string;
   completed_trades?: number;
   portfolio_return?: number;
+  portfolio_closed_trade_return?: number;
   portfolio_max_drawdown?: number;
   decision_state?: string;
   score?: number;
@@ -33,6 +34,8 @@ type Leader = {
   eligible_for_live_rank?: boolean;
   profitable_after_costs?: boolean;
   positive_point_estimate_after_costs?: boolean;
+  promising_after_costs?: boolean;
+  promising_markets?: string[];
   trade_count_scope?: string;
   markets_with_completed_trades?: number;
   maximum_completed_trades_in_one_market?: number;
@@ -240,8 +243,10 @@ type Runtime = {
     validated_portfolio_demo_allowed?: boolean;
     mainnet_allowed?: boolean;
     candidate_id?: string | null;
+    candidate_ids?: string[];
     candidate_name?: string;
     allowed_markets?: string[];
+    allowed_markets_by_model?: Record<string, string[]>;
     release_gate_checked_at?: string;
     blockers?: string[];
   };
@@ -306,6 +311,7 @@ type Runtime = {
     profitability_status?: string;
     profitable_candidates?: number;
     positive_point_estimate_candidates?: number;
+    promising_candidates?: number;
     validated_profitable_candidates?: number;
     profitability_count_semantics?: string;
     leaderboard?: Leader[];
@@ -523,7 +529,16 @@ type Runtime = {
     status?: string;
     candidate_name?: string;
     cohort_model_ids?: string[];
+    cohort?: Array<{
+      model_id?: string;
+      display_name?: string;
+      allowed_markets?: string[];
+      completed_trades?: number;
+      maximum_lane_trades?: number;
+      evidence_tier?: string;
+    }>;
     allowed_markets?: string[];
+    allowed_markets_by_model?: Record<string, string[]>;
     completed_trades_at_selection?: number;
     portfolio_return_at_selection?: number;
     evidence_use?: string;
@@ -1012,7 +1027,11 @@ export default function Page() {
       (item) =>
         item.model_id === runtime?.factor_model_tournament?.leader_model_id,
     ) ?? leaderboard[0];
-  const leaderReturn = leader?.portfolio_return ?? paper?.portfolio?.return;
+  const leaderReturn =
+    leader?.portfolio_closed_trade_return ??
+    paper?.portfolio?.closed_trade_return ??
+    leader?.portfolio_return ??
+    paper?.portfolio?.return;
   const leaderName =
     leader?.display_name ??
     paper?.display_name ??
@@ -1023,11 +1042,17 @@ export default function Page() {
     runtime?.factor_model_tournament?.positive_point_estimate_candidates ??
     runtime?.factor_model_tournament?.profitable_candidates ??
     leaderboard.filter(
-      (item) => item.profitable_after_costs ?? (item.portfolio_return ?? 0) > 0,
+      (item) =>
+        item.positive_point_estimate_after_costs ?? (item.portfolio_return ?? 0) > 0,
     ).length;
+  const promisingCandidates =
+    runtime?.factor_model_tournament?.promising_candidates ??
+    leaderboard.filter((item) => item.promising_after_costs).length;
   const profitableModels = leaderboard.filter(
     (item) =>
-      (item.completed_trades ?? 0) > 0 && (item.portfolio_return ?? 0) > 0,
+      item.positive_point_estimate_after_costs ??
+      ((item.completed_trades ?? 0) > 0 &&
+        (item.portfolio_closed_trade_return ?? item.portfolio_return ?? 0) > 0),
   );
   const validatedProfitableCandidates =
     runtime?.factor_model_tournament?.validated_profitable_candidates ?? 0;
@@ -1413,7 +1438,8 @@ export default function Page() {
                       Лидер {leaderName}: {number(leaderCompleted)} сделок суммарно
                       по {number(leaderMarketsWithTrades)} рынкам; максимум на одном
                       рынке — {number(leaderMaximumLaneTrades)}. Положительных
-                      оценок: {number(profitableCandidates)}, доказанных: {number(validatedProfitableCandidates)}.
+                      оценок: {number(profitableCandidates)}, перспективных веток
+                      с 8+ сделками: {number(promisingCandidates)}, доказанных: {number(validatedProfitableCandidates)}.
                     </p>
                   </div>
                 </article>
@@ -1434,7 +1460,7 @@ export default function Page() {
                 </div>
                 <Badge
                   status={profitableModels.length > 0 ? "PROMISING" : "COLLECTING_DATA"}
-                  label={`${number(profitableModels.length)} видимых кандидатов`}
+                  label={`${number(profitableModels.length)} сырых положительных оценок`}
                 />
               </div>
               <p className="note">
@@ -1468,12 +1494,15 @@ export default function Page() {
                             <small>{mechanismName(item.mechanism_program_id, item.expression)}</small>
                           </div>
                           <strong className="positive">
-                            {pct(item.portfolio_return)}
+                            {pct(item.portfolio_closed_trade_return ?? item.portfolio_return)}
                           </strong>
                         </div>
                         <div className="profitableModelFacts">
                           <span>
                             {number(item.completed_trades)} суммарно · максимум {number(item.maximum_completed_trades_in_one_market)} на рынке
+                          </span>
+                          <span>
+                            Перспективные рынки: {(item.promising_markets ?? []).map(coin).join(", ") || "ещё нет"}
                           </span>
                           <span>{forwardStatus(modelStatus)}</span>
                         </div>
@@ -1837,9 +1866,17 @@ export default function Page() {
               ) : null}
               <div className="demoMetrics">
                 <Metric
-                  label="Кандидат"
-                  value={demoGovernance?.candidate_name ?? modelLabel(demo?.strategy_id)}
-                  hint={`${number(demoGovernance?.completed_trades_at_selection)} SHADOW-сделок при выборе`}
+                  label="Demo-когорта"
+                  value={
+                    demoGovernance?.cohort?.length
+                      ? `${number(demoGovernance.cohort.length)} кандидата`
+                      : demoGovernance?.candidate_name ?? modelLabel(demo?.strategy_id)
+                  }
+                  hint={
+                    demoGovernance?.cohort
+                      ?.map((item) => `${item.display_name ?? modelLabel(item.model_id)}: ${number(item.maximum_lane_trades)} сделок`)
+                      .join(" · ") || `${number(demoGovernance?.completed_trades_at_selection)} SHADOW-сделок при выборе`
+                  }
                 />
                 <Metric
                   label="Разрешённые рынки"
@@ -1868,6 +1905,31 @@ export default function Page() {
                   }
                 />
               </div>
+              {(demoGovernance?.cohort?.length ?? 0) > 0 ? (
+                <div className="demoPositions">
+                  {demoGovernance?.cohort?.map((candidate) => (
+                    <article className="demoPosition" key={candidate.model_id}>
+                      <div className="demoPositionTitle">
+                        <b>{candidate.display_name ?? modelLabel(candidate.model_id)}</b>
+                        <Badge
+                          status={candidate.evidence_tier ?? "COLLECTING_DATA"}
+                          label={candidate.evidence_tier ?? "Собирает evidence"}
+                        />
+                      </div>
+                      <div className="demoPositionGrid">
+                        <Metric
+                          label="Её рынки"
+                          value={(candidate.allowed_markets ?? []).map(coin).join(", ") || "—"}
+                        />
+                        <Metric
+                          label="Максимум сделок в ветке"
+                          value={number(candidate.maximum_lane_trades)}
+                        />
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : null}
               {(demoEvidence?.unclassified_legacy_fill_events ?? 0) > 0 ? (
                 <div className="demoWaiting">
                   <b>Старые исполнения исключены из Demo PnL</b>
