@@ -80,6 +80,10 @@ type DemoPosition = {
   owner?: string;
   strategy_id?: string;
   opened_at?: string;
+  submission_quote?: string;
+  execution_contract?: string;
+  exit_policy?: string;
+  model_maximum_hold_at?: string;
 };
 type DemoExperiment = DemoPosition & {
   status?: string;
@@ -112,6 +116,8 @@ type DemoRoundTrip = {
   net_pnl_usdt?: string;
   return_on_notional?: string;
   close_reason?: string;
+  execution_contract?: string;
+  signal_episode_id?: string | null;
 };
 type ForwardTrial = {
   status?: string;
@@ -461,6 +467,10 @@ type Runtime = {
     mean_latency_ms?: number | null;
     mean_absolute_slippage_bps?: string | null;
     actual_fees_usdt?: string;
+    all_time_actual_fees_usdt?: string;
+    current_execution_contract?: string;
+    current_execution_fill_events?: number;
+    excluded_prior_contract_fill_events?: number;
     discrete_funding_events?: number;
     queue_position_observations?: number;
     blockers?: string[];
@@ -479,9 +489,19 @@ type Runtime = {
       profitability_status?: string;
       by_strategy?: Record<
         string,
-        { round_trips?: number; net_pnl_usdt?: string }
+        {
+          round_trips?: number;
+          net_pnl_usdt?: string;
+          mean_return_on_notional?: string;
+          win_rate?: number;
+          calibration_status?: string;
+        }
       >;
       recent_round_trips?: DemoRoundTrip[];
+    };
+    all_time_demo_trading?: {
+      completed_round_trips?: number;
+      realized_net_pnl_usdt?: string;
     };
   };
   stall_acceleration?: {
@@ -536,6 +556,14 @@ type Runtime = {
       completed_trades?: number;
       maximum_lane_trades?: number;
       evidence_tier?: string;
+      demo_calibration?: {
+        execution_contract?: string;
+        round_trips?: number;
+        net_pnl_usdt?: string;
+        mean_return_on_notional?: string | null;
+        win_rate?: number | null;
+        status?: string;
+      };
     }>;
     allowed_markets?: string[];
     allowed_markets_by_model?: Record<string, string[]>;
@@ -1198,7 +1226,22 @@ export default function Page() {
     GOVERNANCE_EXIT_SENT: "Кандидат отозван — позиция закрывается",
     TIME_EXIT_SENT: "Лимит времени достигнут — позиция закрывается",
     STALE_SIGNAL_EXIT_SENT: "Устаревший сигнал — позиция закрывается",
+    MODEL_SIGNAL_EXIT_SENT: "Модель завершила сигнал — позиция закрывается",
     ERROR: "Ошибка Demo-контура",
+  };
+  const demoCloseReasonLabels: Record<string, string> = {
+    STOP_LOSS: "Аварийный Stop Loss",
+    TRAILING_STOP: "Trailing Stop",
+    TAKE_PROFIT: "Take Profit",
+    PARTIAL_TAKE_PROFIT: "Частичный Take Profit",
+    MODEL_SIGNAL_FLAT: "Модель перешла во FLAT",
+    MODEL_SIGNAL_REVERSED: "Модель сменила направление",
+    MODEL_SIGNAL_REPLACED: "Новый эпизод сигнала",
+    MODEL_MAX_HOLD: "Максимальный горизонт модели",
+    MODEL_HALTED: "Модель остановлена",
+    GOVERNANCE: "Отозван допуск кандидата",
+    TIME_LIMIT: "Технический лимит времени",
+    BROKER_CLOSED: "Закрыто биржей — причина не классифицирована",
   };
   const demoStatusLabel =
     demoStatusLabels[demo?.status ?? ""] ??
@@ -1860,6 +1903,14 @@ export default function Page() {
                   Mainnet: ВЫКЛЮЧЕН
                 </span>
               </div>
+              <div className="demoWaiting">
+                <b>Чистая эпоха исполнения</b>
+                <span>
+                  Текущий результат считает только контракт {demoEvidence?.current_execution_contract ?? "—"} ·
+                  новых событий: {number(demoEvidence?.current_execution_fill_events)} ·
+                  исключено прежних событий: {number(demoEvidence?.excluded_prior_contract_fill_events)}
+                </span>
+              </div>
               {demo?.reason || demo?.blockers?.length ? (
                 <div className="demoWaiting">
                   <b>Почему сейчас нет нового ордера</b>
@@ -1927,18 +1978,30 @@ export default function Page() {
                           label="Максимум сделок в ветке"
                           value={number(candidate.maximum_lane_trades)}
                         />
+                        <Metric
+                          label="Калибровка на Demo"
+                          value={candidate.demo_calibration?.status ?? "WARMING_UP"}
+                          hint={`${number(candidate.demo_calibration?.round_trips)} сделок · ${money(candidate.demo_calibration?.net_pnl_usdt)}`}
+                          tone={
+                            Number(candidate.demo_calibration?.net_pnl_usdt ?? 0) > 0
+                              ? "positive"
+                              : Number(candidate.demo_calibration?.net_pnl_usdt ?? 0) < 0
+                                ? "negative"
+                                : "neutral"
+                          }
+                        />
                       </div>
                     </article>
                   ))}
                 </div>
               ) : null}
-              {(demoEvidence?.unclassified_legacy_fill_events ?? 0) > 0 ? (
+              {(demoEvidence?.excluded_prior_contract_fill_events ?? 0) > 0 ? (
                 <div className="demoWaiting">
-                  <b>Старые исполнения исключены из Demo PnL</b>
+                  <b>Предыдущая ошибочная эпоха исключена из текущего Demo PnL</b>
                   <span>
-                    {number(demoEvidence?.unclassified_legacy_fill_events)} прежних событий не имеют
-                    надёжной связи «вход → выход». Atlas не выдаёт их за завершённые сделки и не
-                    использует для решения о прибыльности.
+                    {number(demoEvidence?.excluded_prior_contract_fill_events)} прежних событий
+                    сохранены для аудита, но больше не смешиваются с результатом исправленного
+                    исполнительного контура.
                   </span>
                 </div>
               ) : null}
@@ -1964,7 +2027,21 @@ export default function Page() {
                         <Metric label="Количество" value={positionItem.quantity ?? "—"} />
                         <Metric label="Риск" value={money(positionItem.risk_usdt)} tone="warning" />
                         <Metric label="Stop loss" value={price(Number(positionItem.stop_loss))} />
-                        <Metric label="Take profit" value={price(Number(positionItem.take_profit))} />
+                        <Metric
+                          label="Политика выхода"
+                          value={
+                            positionItem.exit_policy === "MODEL_NATIVE_SIGNAL"
+                              ? "По сигналу модели"
+                              : positionItem.take_profit
+                                ? `Take profit ${price(Number(positionItem.take_profit))}`
+                                : "Защитное управление"
+                          }
+                          hint={
+                            positionItem.exit_policy === "MODEL_NATIVE_SIGNAL"
+                              ? "Stop Loss используется только как аварийная защита"
+                              : undefined
+                          }
+                        />
                         <Metric
                           label="В позиции"
                           value={
@@ -1979,7 +2056,11 @@ export default function Page() {
                                 )
                               : "—"
                           }
-                          hint="Максимум 30 минут"
+                          hint={
+                            positionItem.model_maximum_hold_at
+                              ? `Не позже ${new Date(positionItem.model_maximum_hold_at).toLocaleTimeString("ru-RU")}`
+                              : "Контролируется исполнительной политикой"
+                          }
                         />
                       </div>
                     </article>
@@ -2021,7 +2102,16 @@ export default function Page() {
                         <Metric label="Выход" value={price(Number(trade.exit_price))} />
                         <Metric label="Комиссии" value={money(trade.fees_usdt)} />
                         <Metric label="Доходность" value={pct(trade.return_on_notional)} />
-                        <Metric label="Причина выхода" value={trade.close_reason ?? "—"} />
+                        <Metric
+                          label="Причина выхода"
+                          value={
+                            (trade.close_reason ?? "")
+                              .split("+")
+                              .map((reason) => demoCloseReasonLabels[reason] ?? reason)
+                              .filter(Boolean)
+                              .join(" + ") || "—"
+                          }
+                        />
                       </div>
                     </article>
                   ))}
