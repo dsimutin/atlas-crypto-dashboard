@@ -1197,6 +1197,7 @@ export default function Page() {
     EXIT_PENDING: "Выход отправлен, ждём подтверждение биржи",
     GOVERNANCE_EXIT_SENT: "Кандидат отозван — позиция закрывается",
     TIME_EXIT_SENT: "Лимит времени достигнут — позиция закрывается",
+    STALE_SIGNAL_EXIT_SENT: "Устаревший сигнал — позиция закрывается",
     ERROR: "Ошибка Demo-контура",
   };
   const demoStatusLabel =
