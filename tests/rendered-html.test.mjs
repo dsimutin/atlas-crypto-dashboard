@@ -265,6 +265,9 @@ test("shows autonomous Demo trading separately from SHADOW and Mainnet", async (
   assert.match(worker, /"research_demo_governance"/);
   assert.match(worker, /CREATE TABLE IF NOT EXISTS runtime_status/);
   assert.match(worker, /idx_approval_attempts_key_time/);
+  assert.match(worker, /"execution_allowed"/);
+  assert.match(worker, /"demo_allowed"/);
+  assert.match(worker, /"mainnet_allowed"/);
 });
 
 test("shows research-agent usefulness instead of raw activity", async () => {

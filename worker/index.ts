@@ -20,6 +20,9 @@ const PASSWORD_WINDOW_MS = 15 * 60 * 1000;
 
 const runtimeFields = new Set([
   "updated_at",
+  "execution_allowed",
+  "demo_allowed",
+  "mainnet_allowed",
   "first_observation_at",
   "last_full_cycle_at",
   "last_decision_status",
