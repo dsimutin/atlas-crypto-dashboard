@@ -259,6 +259,10 @@ test("shows autonomous Demo trading separately from SHADOW and Mainnet", async (
     "Research Demo:",
     "доказанный портфельный Demo:",
     "Почему сейчас нет нового ордера",
+    "Сигналы сейчас",
+    "Связь с Demo",
+    "ТЕКУЩИЙ СИГНАЛ МОДЕЛИ",
+    "Последние эпизоды сигналов",
     "Реальные деньги: ВЫКЛЮЧЕНЫ",
     "Открытые SHADOW-позиции",
   ]) {

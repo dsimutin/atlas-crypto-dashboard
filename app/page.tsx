@@ -100,6 +100,50 @@ type DemoExperiment = DemoPosition & {
   blockers?: string[];
   pending_closure_evidence?: number;
   mainnet_allowed?: boolean;
+  retryable?: boolean;
+  retry_scheduled?: boolean;
+  next_retry_seconds?: number | null;
+  signal_funnel?: {
+    checked_at?: string;
+    cohort_lanes?: number;
+    current_signals?: number;
+    ready_for_demo?: number;
+    already_executed?: number;
+    blocked_or_unavailable?: number;
+  };
+  cohort_signals?: DemoSignalLane[];
+  runtime_monitor?: {
+    consecutive_errors?: number;
+    last_success_at?: string;
+    last_error_at?: string;
+    last_error?: string;
+  };
+  recent_signal_episodes?: DemoSignalEpisode[];
+};
+type DemoSignalLane = {
+  model_id?: string;
+  display_name?: string;
+  symbol?: string;
+  position?: number;
+  direction?: "FLAT" | "LONG" | "SHORT";
+  signal_episode_id?: string | null;
+  signal_episode_started_at?: string | null;
+  candidate_created_at?: string | null;
+  candidate_expires_at?: string | null;
+  delivery_status?: string;
+  reason?: string;
+};
+type DemoSignalEpisode = {
+  signal_episode_id?: string;
+  model_id?: string;
+  display_name?: string;
+  symbol?: string;
+  direction?: string;
+  first_seen_at?: string;
+  last_seen_at?: string;
+  ended_at?: string;
+  outcome?: string;
+  reason?: string;
 };
 type DemoRoundTrip = {
   intent_id?: string;
@@ -1188,6 +1232,8 @@ export default function Page() {
   const demoEvidence = runtime?.venue_execution_evidence;
   const demoTrading = demoEvidence?.demo_trading;
   const demoRoundTrips = demoTrading?.recent_round_trips ?? [];
+  const demoSignalLanes = demo?.cohort_signals ?? [];
+  const demoSignalEpisodes = demo?.recent_signal_episodes ?? [];
   const demoPositions = demo?.positions?.length
     ? demo.positions
     : demo?.open_positions
@@ -1246,6 +1292,22 @@ export default function Page() {
   const demoStatusLabel =
     demoStatusLabels[demo?.status ?? ""] ??
     (demoOperational ? "Автономный Demo-контур активен" : "Demo-контур готовится");
+  const demoDeliveryLabels: Record<string, string> = {
+    MODEL_FLAT: "Сигнала сейчас нет",
+    READY_FOR_DEMO: "Готов к Demo-ордеру",
+    EPISODE_ALREADY_EXECUTED: "Этот эпизод уже исполнен",
+    SIGNAL_NOT_PUBLISHED: "Сигнал ещё не дошёл до очереди",
+    SIGNAL_EXPIRED: "Сигнал уже завершился",
+    SIGNAL_PROVENANCE_MISSING: "Нет подтверждённого начала сигнала",
+    MODEL_STATE_UNAVAILABLE: "Состояние модели временно недоступно",
+    MODEL_HALTED: "Модель остановлена",
+    EXECUTED: "Demo-ордер исполнен",
+    ENDED_WITHOUT_EXECUTION: "Сигнал завершился без входа",
+  };
+  const demoReason =
+    demo?.reason === "all governed model×market lanes are currently FLAT"
+      ? "Все допущенные модели сейчас находятся в FLAT — свежего LONG/SHORT-сигнала нет."
+      : demo?.reason;
   const manualAction = automation?.manual_action;
   const mainStatus = automation?.requires_attention
     ? { title: "Atlas ждёт вашего решения", tone: "warning" as Tone }
@@ -1911,13 +1973,33 @@ export default function Page() {
                   исключено прежних событий: {number(demoEvidence?.excluded_prior_contract_fill_events)}
                 </span>
               </div>
-              {demo?.reason || demo?.blockers?.length ? (
+              {demoReason || demo?.blockers?.length ? (
                 <div className="demoWaiting">
                   <b>Почему сейчас нет нового ордера</b>
-                  <span>{demo?.reason ?? demo?.blockers?.join("; ")}</span>
+                  <span>{demoReason ?? demo?.blockers?.join("; ")}</span>
                 </div>
               ) : null}
               <div className="demoMetrics">
+                <Metric
+                  label="Сигналы сейчас"
+                  value={number(demo?.signal_funnel?.current_signals)}
+                  hint={`Готовы к входу: ${number(demo?.signal_funnel?.ready_for_demo)} · уже исполнены: ${number(demo?.signal_funnel?.already_executed)}`}
+                  tone={(demo?.signal_funnel?.ready_for_demo ?? 0) > 0 ? "positive" : "neutral"}
+                />
+                <Metric
+                  label="Связь с Demo"
+                  value={
+                    (demo?.runtime_monitor?.consecutive_errors ?? 0) > 0
+                      ? `${number(demo?.runtime_monitor?.consecutive_errors)} ошибки подряд`
+                      : "Работает"
+                  }
+                  hint={
+                    demo?.runtime_monitor?.last_success_at
+                      ? `Последний успешный цикл ${new Date(demo.runtime_monitor.last_success_at).toLocaleTimeString("ru-RU")}`
+                      : "Ожидается первый подтверждённый цикл"
+                  }
+                  tone={(demo?.runtime_monitor?.consecutive_errors ?? 0) > 0 ? "warning" : "positive"}
+                />
                 <Metric
                   label="Demo-когорта"
                   value={
@@ -1958,6 +2040,52 @@ export default function Page() {
                   }
                 />
               </div>
+              {demoSignalLanes.length > 0 ? (
+                <div className="demoPositions">
+                  {demoSignalLanes.map((lane) => (
+                    <article
+                      className="demoPosition"
+                      key={`${lane.model_id ?? "model"}-${lane.symbol ?? "market"}`}
+                    >
+                      <div className="demoPositionTitle">
+                        <div>
+                          <span className="eyebrow">ТЕКУЩИЙ СИГНАЛ МОДЕЛИ</span>
+                          <h3>{lane.display_name ?? modelLabel(lane.model_id)}</h3>
+                        </div>
+                        <Badge
+                          status={lane.delivery_status === "READY_FOR_DEMO" ? "HEALTHY" : "INSUFFICIENT_EVIDENCE"}
+                          label={demoDeliveryLabels[lane.delivery_status ?? ""] ?? lane.delivery_status ?? "Неизвестно"}
+                        />
+                      </div>
+                      <div className="demoPositionGrid">
+                        <Metric label="Рынок" value={coin(lane.symbol ?? "—")} />
+                        <Metric
+                          label="Положение"
+                          value={lane.direction ?? "FLAT"}
+                          tone={lane.direction === "LONG" ? "positive" : lane.direction === "SHORT" ? "warning" : "neutral"}
+                        />
+                        <Metric
+                          label="Начало эпизода"
+                          value={
+                            lane.signal_episode_started_at
+                              ? new Date(lane.signal_episode_started_at).toLocaleString("ru-RU")
+                              : "—"
+                          }
+                        />
+                        <Metric
+                          label="Доставка"
+                          value={demoDeliveryLabels[lane.delivery_status ?? ""] ?? lane.delivery_status ?? "—"}
+                          hint={
+                            lane.reason === "model currently has no LONG or SHORT signal"
+                              ? "Модель продолжает наблюдение и откроет новый эпизод автоматически."
+                              : lane.reason
+                          }
+                        />
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : null}
               {(demoGovernance?.cohort?.length ?? 0) > 0 ? (
                 <div className="demoPositions">
                   {demoGovernance?.cohort?.map((candidate) => (
@@ -2115,6 +2243,20 @@ export default function Page() {
                       </div>
                     </article>
                   ))}
+                </div>
+              ) : null}
+              {demoSignalEpisodes.length > 0 ? (
+                <div className="demoWaiting">
+                  <b>Последние эпизоды сигналов</b>
+                  <span>
+                    {demoSignalEpisodes
+                      .slice(0, 6)
+                      .map(
+                        (episode) =>
+                          `${episode.display_name ?? modelLabel(episode.model_id)} · ${coin(episode.symbol ?? "—")} · ${demoDeliveryLabels[episode.outcome ?? ""] ?? episode.outcome ?? "—"}`,
+                      )
+                      .join(" | ")}
+                  </span>
                 </div>
               ) : null}
               <div className="demoSafety">
