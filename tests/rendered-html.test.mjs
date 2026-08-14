@@ -83,8 +83,21 @@ test("derives readiness and risk from backend fields", async () => {
   assert.match(source, /current_blocking_gate/);
   assert.match(source, /required_completed_trades_per_market/);
   assert.match(source, /risk_per_trade_fraction/);
+  assert.match(source, /dependence_robust_hac_lower_bound/);
+  assert.match(source, /HAC учитывает зависимость соседних сделок/);
   assert.match(source, /portfolio\?\.max_drawdown/);
   assert.doesNotMatch(source, /readinessPercent|riskScore/);
+});
+
+test("shows durable Demo recovery and evidence-ranked scheduling", async () => {
+  const source = await readFile(
+    new URL("../app/page.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /execution_lock_reconciliation/);
+  assert.match(source, /Сверка неоднозначной заявки/);
+  assert.match(source, /evidence_priority_rank/);
+  assert.match(source, /Текущий приоритет Demo/);
 });
 
 test("accepts serialized numeric risk and prevents narrow-screen overflow", async () => {

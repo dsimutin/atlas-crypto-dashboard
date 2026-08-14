@@ -16,6 +16,8 @@ type SymbolState = {
   market_audit?: {
     status?: string;
     one_sided_95pct_lower_bound?: number | null;
+    dependence_robust_hac_lower_bound?: number | null;
+    moving_block_bootstrap_lower_bound?: number | null;
     live_data_available?: boolean;
   };
 };
@@ -103,6 +105,17 @@ type DemoExperiment = DemoPosition & {
   retryable?: boolean;
   retry_scheduled?: boolean;
   next_retry_seconds?: number | null;
+  failure_class?: string;
+  submission_state?: string;
+  submission_order_id?: string | null;
+  submission_reasons?: string[];
+  execution_lock_reconciliation?: {
+    status?: string;
+    resolved?: number;
+    unknown_intents?: number;
+    blockers?: string[];
+    checked_at?: string;
+  };
   signal_funnel?: {
     checked_at?: string;
     cohort_lanes?: number;
@@ -599,7 +612,16 @@ type Runtime = {
       allowed_markets?: string[];
       completed_trades?: number;
       maximum_lane_trades?: number;
+      evidence_priority_rank?: number;
       evidence_tier?: string;
+      lanes?: Array<{
+        symbol?: string;
+        completed_trades?: number;
+        return?: number;
+        one_sided_95pct_lower_bound?: number | null;
+        dependence_robust_hac_lower_bound?: number | null;
+        moving_block_bootstrap_lower_bound?: number | null;
+      }>;
       demo_calibration?: {
         execution_contract?: string;
         round_trips?: number;
@@ -608,6 +630,11 @@ type Runtime = {
         win_rate?: number | null;
         status?: string;
       };
+    }>;
+    shadow_eligible?: Array<{
+      model_id?: string;
+      display_name?: string;
+      shadow_reason?: string;
     }>;
     allowed_markets?: string[];
     allowed_markets_by_model?: Record<string, string[]>;
@@ -1979,6 +2006,19 @@ export default function Page() {
                   <span>{demoReason ?? demo?.blockers?.join("; ")}</span>
                 </div>
               ) : null}
+              {demo?.execution_lock_reconciliation?.status &&
+              demo.execution_lock_reconciliation.status !== "CLEAR" ? (
+                <div className="demoWaiting">
+                  <b>Сверка неоднозначной заявки</b>
+                  <span>
+                    {demo.execution_lock_reconciliation.status} · снято безопасных
+                    блокировок: {number(demo.execution_lock_reconciliation.resolved)}
+                    {demo.execution_lock_reconciliation.blockers?.length
+                      ? ` · ${demo.execution_lock_reconciliation.blockers.join("; ")}`
+                      : ""}
+                  </span>
+                </div>
+              ) : null}
               <div className="demoMetrics">
                 <Metric
                   label="Сигналы сейчас"
@@ -2105,6 +2145,32 @@ export default function Page() {
                         <Metric
                           label="Максимум сделок в ветке"
                           value={number(candidate.maximum_lane_trades)}
+                          hint={
+                            candidate.evidence_priority_rank
+                              ? `Текущий приоритет Demo: №${candidate.evidence_priority_rank}`
+                              : undefined
+                          }
+                        />
+                        <Metric
+                          label="Устойчивая нижняя граница"
+                          value={pct(
+                            candidate.lanes?.[0]
+                              ?.dependence_robust_hac_lower_bound ??
+                              candidate.lanes?.[0]
+                                ?.one_sided_95pct_lower_bound,
+                          )}
+                          hint="HAC учитывает зависимость соседних сделок; это не лимит просадки"
+                          tone={
+                            Number(
+                              candidate.lanes?.[0]
+                                ?.dependence_robust_hac_lower_bound ??
+                                candidate.lanes?.[0]
+                                  ?.one_sided_95pct_lower_bound ??
+                                0,
+                            ) > 0
+                              ? "positive"
+                              : "warning"
+                          }
                         />
                         <Metric
                           label="Калибровка на Demo"

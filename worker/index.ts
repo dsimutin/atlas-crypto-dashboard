@@ -13,7 +13,7 @@ interface WorkerEnv extends Env {
   APPROVAL_RELAY_URL?: string;
 }
 
-const DASHBOARD_BUILD_ID = "2026.08.14-evidence-routing-04";
+const DASHBOARD_BUILD_ID = "2026.08.14-evidence-routing-05";
 const MAX_RUNTIME_PAYLOAD_BYTES = 65_536;
 const MAX_FAILED_PASSWORD_ATTEMPTS = 5;
 const PASSWORD_WINDOW_MS = 15 * 60 * 1000;
