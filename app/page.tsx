@@ -547,6 +547,7 @@ type Runtime = {
     unclassified_legacy_fill_events?: number;
     demo_trading?: {
       completed_round_trips?: number;
+      model_native_completed_round_trips?: number;
       open_trades_with_entry_evidence?: number;
       partial_closures?: number;
       profitable_round_trips?: number;
@@ -566,6 +567,16 @@ type Runtime = {
         }
       >;
       by_execution_lane?: Record<
+        string,
+        {
+          completed_round_trips?: number;
+          realized_gross_pnl_usdt?: string;
+          realized_net_pnl_usdt?: string;
+          win_rate?: number | null;
+          profitability_status?: string;
+        }
+      >;
+      by_execution_lane_model_native?: Record<
         string,
         {
           completed_round_trips?: number;
@@ -1341,10 +1352,14 @@ export default function Page() {
   const demoNet = Number(demoTrading?.realized_net_pnl_usdt ?? 0);
   const demoGross = Number(demoTrading?.realized_gross_pnl_usdt ?? 0);
   const demoCosts = Math.max(0, demoGross - demoNet);
-  const demoCompleted = demoTrading?.completed_round_trips ?? 0;
-  const verifiedDemo = demoTrading?.by_execution_lane?.VERIFIED_DEMO;
+  const demoCompletedAll = demoTrading?.completed_round_trips ?? 0;
+  const demoCompleted =
+    demoTrading?.model_native_completed_round_trips ?? demoCompletedAll;
+  const cleanDemoLanes =
+    demoTrading?.by_execution_lane_model_native ?? demoTrading?.by_execution_lane;
+  const verifiedDemo = cleanDemoLanes?.VERIFIED_DEMO;
   const researchCalibrationDemo =
-    demoTrading?.by_execution_lane?.RESEARCH_CALIBRATION;
+    cleanDemoLanes?.RESEARCH_CALIBRATION;
   const verifiedDemoNet = Number(verifiedDemo?.realized_net_pnl_usdt ?? 0);
   const researchCalibrationNet = Number(
     researchCalibrationDemo?.realized_net_pnl_usdt ?? 0,
@@ -1483,7 +1498,7 @@ export default function Page() {
   const statusExplanation = live
     ? "Ниже показан общий результат всех работающих стратегий после расходов."
     : demoOperational
-      ? `Bybit Demo работает автоматически: ${number(demoCompleted)} закрытых сделок, ${number(demoPositions.length)} открытых позиций, результат после расходов ${money(demoNet)}.${sourcesOk ? "" : " После перезапуска observer новые входы временно ждут восстановления обоих потоков данных; открытые позиции остаются под управлением."}`
+      ? `Bybit Demo работает автоматически: ${number(demoCompleted)} model-native сделок из ${number(demoCompletedAll)} закрытых, ${number(demoPositions.length)} открытых позиций, общий результат после расходов ${money(demoNet)}.${sourcesOk ? "" : " После перезапуска observer новые входы временно ждут восстановления обоих потоков данных; открытые позиции остаются под управлением."}`
       : "Реальные ордера отключены. Research Demo пока ожидает разрешённый сигнал или восстановление технической готовности.";
   const gates = runtime?.trading_gate_audit?.gates ?? [];
   const milestones = [
@@ -1690,7 +1705,7 @@ export default function Page() {
                       {money(demoNet)}
                     </strong>
                     <p>
-                      {number(demoCompleted)} закрытых сделок · {number(demoPositions.length)}
+                      {number(demoCompleted)} model-native из {number(demoCompletedAll)} закрытых · {number(demoPositions.length)}
                       {" "}позиций сейчас открыто · реальные деньги не используются.
                       Подтверждённый контур: {money(verifiedDemoNet)} за {number(verifiedDemoCompleted)} сделок.
                       Исследовательская калибровка: {money(researchCalibrationNet)} за {number(researchCalibrationCompleted)} сделок.
