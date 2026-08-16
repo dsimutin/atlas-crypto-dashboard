@@ -67,7 +67,7 @@ test("provides four-level mobile navigation and plain status copy", async () => 
   for (const label of ["Главная", "Торговля", "Обучение", "Настройки"])
     assert.match(source, new RegExp(label));
   assert.match(source, /Реальные ордера отключены/);
-  assert.match(source, /Виртуальные позиции/);
+  assert.match(source, /Открытые Bybit Demo-позиции/);
   assert.match(source, /Технические детали/);
   assert.match(source, /Собирает данные/);
   assert.match(source, /Пока недостаточно данных/);
@@ -167,15 +167,15 @@ test("keeps the home page focused on profit evidence and next action", async () 
   for (const label of [
     "Три уровня — три разных результата",
     "Реальные деньги",
-    "Допущенный SHADOW-портфель",
+    "Bybit Demo — реальные тестовые ордера",
     "Исследовательские кандидаты",
     "ГДЕ ПРИБЫЛЬНЫЕ МОДЕЛИ",
-    "Положительные оценки, ещё не доказанные стратегии",
-    "Только допущенные стратегии вместе",
+    "Положительные результаты на Bybit Demo",
+    "Все исполненные Demo-стратегии вместе",
     "На реальных деньгах",
     "Проверка результата",
-    "Стратегий включено в итог",
-    "Подтверждённых",
+    "Кандидатов исполнялось",
+    "Кандидатов в плюсе",
     "ЧТО ПРОИСХОДИТ",
     "ЧЕГО ЖДЁМ",
   ]) {
@@ -183,26 +183,19 @@ test("keeps the home page focused on profit evidence and next action", async () 
   }
   assert.match(home, /Общий результат после всех расходов/);
   assert.match(home, /Результат до расходов/);
-  assert.match(home, /Комиссии и funding/);
-  assert.match(home, /не складывает проценты отдельных моделей/);
+  assert.match(home, /Фактические расходы/);
+  assert.match(home, /Среднее проскальзывание/);
+  assert.match(home, /фактически закрытые Demo-сделки/);
   assert.match(home, /сделок суммарно/);
   assert.match(home, /максимум на одном/);
-  assert.match(home, /доказанных рынков/);
   assert.match(
     home,
-    /это результат виртуальной проверки, а не\s+заработок пользователя/,
+    /это результат биржевой Demo-проверки, а не\s+заработок пользователя/,
   );
-  assert.match(home, /ИСТОРИЯ ПРЕДЫДУЩЕГО СОСТАВА/);
-  assert.match(home, /Результат предыдущего состава сохранён/);
-  assert.match(home, /Текущий результат не отменяет прошлый/);
-  assert.match(home, /ИСТОРИЯ ДО ИСПРАВЛЕНИЯ РАСЧЁТА/);
-  assert.match(home, /только исполнимый объём и 12 bps расходов/);
-  assert.match(home, /Непрерывный SHADOW-журнал/);
-  assert.match(
-    home,
-    /добавление или исключение требует двух новых закрытых сделок/,
-  );
-  assert.match(home, /сделки разных наборов стратегий не смешиваются/);
+  assert.match(home, /прежние контракты сохранены для аудита/);
+  assert.match(home, /Открытые Bybit Demo-позиции/);
+  assert.match(home, /demoCompleted/);
+  assert.match(home, /demoNet/);
   assert.doesNotMatch(home, /Gentle Grove|Лидер исследовательского рейтинга/);
   assert.doesNotMatch(
     home,
@@ -276,6 +269,8 @@ test("shows autonomous Demo trading separately from SHADOW and Mainnet", async (
     "Связь с Demo",
     "ТЕКУЩИЙ СИГНАЛ МОДЕЛИ",
     "Последние эпизоды сигналов",
+    "Эффективный предел:",
+    "из них исследовательских — не более",
     "Реальные деньги: ВЫКЛЮЧЕНЫ",
     "Открытые SHADOW-позиции",
   ]) {
@@ -283,6 +278,7 @@ test("shows autonomous Demo trading separately from SHADOW and Mainnet", async (
   }
   assert.match(source, /research_demo_governance/);
   assert.match(source, /research_demo_execution/);
+  assert.match(source, /executor_safety_limits/);
   assert.match(worker, /"research_demo_governance"/);
   assert.match(worker, /"research_demo_execution"/);
   assert.match(worker, /CREATE TABLE IF NOT EXISTS runtime_status/);

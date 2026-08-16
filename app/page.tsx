@@ -70,6 +70,8 @@ type RuntimeLifecycleEvent = {
   session_id?: string;
   pid?: number;
   planned?: boolean;
+  gap_seconds?: number;
+  persisted_state_retained?: boolean;
 };
 type DemoPosition = {
   symbol?: string;
@@ -115,6 +117,8 @@ type DemoExperiment = DemoPosition & {
     unknown_intents?: number;
     blockers?: string[];
     checked_at?: string;
+    consecutive_blocked_cycles?: number;
+    alert_required?: boolean;
   };
   signal_funnel?: {
     checked_at?: string;
@@ -130,8 +134,13 @@ type DemoExperiment = DemoPosition & {
     last_success_at?: string;
     last_error_at?: string;
     last_error?: string;
+    last_resolved_error?: string;
+    last_resolved_error_at?: string;
   };
   recent_signal_episodes?: DemoSignalEpisode[];
+  execution_profile?: {
+    demo_capital_usdt?: string;
+  };
 };
 type DemoSignalLane = {
   model_id?: string;
@@ -269,6 +278,8 @@ type Runtime = {
       status?: string;
       started_at?: string;
       start_reason?: string;
+      resume_gap_seconds?: number;
+      market_data_gap_expected?: boolean;
     };
     counters?: {
       starts?: number;
@@ -554,6 +565,16 @@ type Runtime = {
           calibration_status?: string;
         }
       >;
+      by_execution_lane?: Record<
+        string,
+        {
+          completed_round_trips?: number;
+          realized_gross_pnl_usdt?: string;
+          realized_net_pnl_usdt?: string;
+          win_rate?: number | null;
+          profitability_status?: string;
+        }
+      >;
       recent_round_trips?: DemoRoundTrip[];
     };
     all_time_demo_trading?: {
@@ -636,12 +657,27 @@ type Runtime = {
       display_name?: string;
       shadow_reason?: string;
     }>;
+    suspended_lanes?: Array<{
+      model_id?: string;
+      display_name?: string;
+      symbol?: string;
+      reason?: string;
+      round_trips?: number;
+      net_pnl_usdt?: string;
+    }>;
     allowed_markets?: string[];
     allowed_markets_by_model?: Record<string, string[]>;
     completed_trades_at_selection?: number;
     portfolio_return_at_selection?: number;
     evidence_use?: string;
     maximum_open_positions?: number;
+    executor_safety_limits?: {
+      maximum_open_positions?: number;
+      maximum_research_calibration_positions?: number;
+      maximum_verified_experiments_per_day?: number;
+      maximum_research_calibration_experiments_per_day?: number;
+      owner_policy_is_ceiling?: boolean;
+    };
     maximum_new_experiments_per_day?: number;
     risk_fraction_per_trade?: string;
     profitability_proven?: boolean;
@@ -954,6 +990,8 @@ function lifecycleLabel(event: RuntimeLifecycleEvent) {
   if (event.type === "UNEXPECTED_TERMINATION")
     return "Обнаружено незапланированное завершение";
   if (event.type === "STOPPED") return "Наблюдатель штатно остановлен";
+  if (event.type === "RESUMED_AFTER_GAP")
+    return "Работа продолжена после сна или выключения Mac";
   return "Состояние наблюдателя изменилось";
 }
 function restartReason(reason?: string) {
@@ -972,6 +1010,7 @@ function restartReason(reason?: string) {
     DURATION_COMPLETE: "завершён заданный интервал",
     STARTUP_FAILURE: "ошибка запуска",
     RUNTIME_FAILURE: "ошибка рабочего процесса",
+    HOST_SLEEP_OR_PROCESS_DOWNTIME: "компьютер спал или был выключен",
   };
   return labels[reason ?? ""] ?? reason ?? "причина не опубликована";
 }
@@ -999,6 +1038,29 @@ function PositionCard({ symbol, item }: { symbol: string; item: SymbolState }) {
         {price(item.current_price)}
       </p>
       <small>В позиции: {number(item.bars_in_position)} свечей</small>
+    </article>
+  );
+}
+
+function DemoPositionCard({ item }: { item: DemoPosition }) {
+  const long = item.side === "Buy";
+  return (
+    <article className="positionCard">
+      <div className="positionHead">
+        <div>
+          <b>{coin(item.symbol ?? "—")}</b>
+          <span className="virtual">Bybit Demo</span>
+        </div>
+        <Badge
+          label={long ? "LONG" : "SHORT"}
+          status={long ? "ACTIVE" : "PROMISING"}
+        />
+      </div>
+      <strong className="neutral">{item.quantity ?? "—"}</strong>
+      <p>
+        Вход {price(Number(item.entry_price))} · Stop {price(Number(item.stop_loss))}
+      </p>
+      <small>Риск: {money(item.risk_usdt)} · реальные деньги выключены</small>
     </article>
   );
 }
@@ -1255,6 +1317,16 @@ export default function Page() {
   const automation = runtime?.promotion_automation;
   const demo = runtime?.demo_experiment;
   const demoGovernance = runtime?.research_demo_governance;
+  const executorLimits = demoGovernance?.executor_safety_limits;
+  const effectiveOpenPositionLimit = Math.min(
+    automation?.demo_enablement?.maximum_open_positions ?? 4,
+    executorLimits?.maximum_open_positions ?? 4,
+  );
+  const effectiveDailyExperimentLimit = Math.min(
+    automation?.demo_enablement?.maximum_new_experiments_per_day ?? 32,
+    (executorLimits?.maximum_verified_experiments_per_day ?? 20) +
+      (executorLimits?.maximum_research_calibration_experiments_per_day ?? 12),
+  );
   const researchDemoExecution = runtime?.research_demo_execution;
   const demoEvidence = runtime?.venue_execution_evidence;
   const demoTrading = demoEvidence?.demo_trading;
@@ -1266,6 +1338,47 @@ export default function Page() {
     : demo?.open_positions
       ? [demo]
       : [];
+  const demoNet = Number(demoTrading?.realized_net_pnl_usdt ?? 0);
+  const demoGross = Number(demoTrading?.realized_gross_pnl_usdt ?? 0);
+  const demoCosts = Math.max(0, demoGross - demoNet);
+  const demoCompleted = demoTrading?.completed_round_trips ?? 0;
+  const verifiedDemo = demoTrading?.by_execution_lane?.VERIFIED_DEMO;
+  const researchCalibrationDemo =
+    demoTrading?.by_execution_lane?.RESEARCH_CALIBRATION;
+  const verifiedDemoNet = Number(verifiedDemo?.realized_net_pnl_usdt ?? 0);
+  const researchCalibrationNet = Number(
+    researchCalibrationDemo?.realized_net_pnl_usdt ?? 0,
+  );
+  const verifiedDemoCompleted = verifiedDemo?.completed_round_trips ?? 0;
+  const researchCalibrationCompleted =
+    researchCalibrationDemo?.completed_round_trips ?? 0;
+  const suspendedResearchLanes = demoGovernance?.suspended_lanes ?? [];
+  const demoRequiredRoundTrips = 20;
+  const demoMissingRoundTrips = Math.max(
+    0,
+    demoRequiredRoundTrips - demoCompleted,
+  );
+  const demoEvidencePercent = Math.min(
+    100,
+    Math.round((demoCompleted / demoRequiredRoundTrips) * 100),
+  );
+  const demoStrategyRows = Object.entries(demoTrading?.by_strategy ?? {});
+  const demoPositiveStrategies = demoStrategyRows
+    .filter(([, item]) => Number(item.net_pnl_usdt ?? 0) > 0)
+    .sort(
+      (a, b) =>
+        Number(b[1].net_pnl_usdt ?? 0) - Number(a[1].net_pnl_usdt ?? 0),
+    );
+  const demoCandidateNames = new Map(
+    (demoGovernance?.cohort ?? [])
+      .filter((item) => item.model_id)
+      .map((item) => [item.model_id as string, item.display_name]),
+  );
+  const demoModelLabel = (modelId: string) =>
+    demoCandidateNames.get(modelId) ?? modelLabel(modelId);
+  const demoCandidateCount =
+    demoGovernance?.cohort?.length ??
+    new Set(demoSignalLanes.map((item) => item.model_id).filter(Boolean)).size;
   const demoEnabled =
     automation?.stage === "RESEARCH_DEMO_ACTIVE" ||
     automation?.stage === "LIMITED_DEMO_ACTIVE";
@@ -1279,10 +1392,26 @@ export default function Page() {
   const researchDemoAllowed =
     researchDemoExecution?.demo_allowed ??
     (demoEnabled && !demoBlockedStatuses.has(demo?.status ?? ""));
+  const activeDemoStatuses = new Set([
+    "EXPERIMENT_OPENED",
+    "MANAGING_POSITION",
+    "MANAGING_PORTFOLIO",
+    "WAITING_FOR_IDEA",
+    "WAITING_FOR_NEW_SIGNAL_EPISODE",
+    "COOLDOWN",
+    "EXIT_PENDING",
+    "GOVERNANCE_EXIT_SENT",
+    "TIME_EXIT_SENT",
+    "STALE_SIGNAL_EXIT_SENT",
+    "MODEL_SIGNAL_EXIT_SENT",
+    "RECONCILIATION_PENDING",
+  ]);
   const demoOperational =
     demoEnabled &&
-    researchDemoAllowed &&
-    !demoBlockedStatuses.has(demo?.status ?? "");
+    !demoBlockedStatuses.has(demo?.status ?? "") &&
+    (researchDemoAllowed ||
+      demoPositions.length > 0 ||
+      activeDemoStatuses.has(demo?.status ?? ""));
   const demoStatusLabels: Record<string, string> = {
     EXPERIMENT_OPENED: "Позиция открыта и защищена",
     MANAGING_POSITION: "Позиция под управлением",
@@ -1300,6 +1429,8 @@ export default function Page() {
     TIME_EXIT_SENT: "Лимит времени достигнут — позиция закрывается",
     STALE_SIGNAL_EXIT_SENT: "Устаревший сигнал — позиция закрывается",
     MODEL_SIGNAL_EXIT_SENT: "Модель завершила сигнал — позиция закрывается",
+    RECONCILIATION_PENDING: "Биржа сверяет неоднозначный ответ",
+    MARKET_ACCESS_BLOCKED: "Один контракт Demo временно недоступен на бирже",
     ERROR: "Ошибка Demo-контура",
   };
   const demoCloseReasonLabels: Record<string, string> = {
@@ -1328,6 +1459,7 @@ export default function Page() {
     SIGNAL_PROVENANCE_MISSING: "Нет подтверждённого начала сигнала",
     MODEL_STATE_UNAVAILABLE: "Состояние модели временно недоступно",
     MODEL_HALTED: "Модель остановлена",
+    MARKET_ACCESS_BLOCKED: "Биржа временно не разрешает этот Demo-контракт",
     EXECUTED: "Demo-ордер исполнен",
     ENDED_WITHOUT_EXECUTION: "Сигнал завершился без входа",
   };
@@ -1338,17 +1470,21 @@ export default function Page() {
   const manualAction = automation?.manual_action;
   const mainStatus = automation?.requires_attention
     ? { title: "Atlas ждёт вашего решения", tone: "warning" as Tone }
-    : !sourcesOk
-      ? { title: "Atlas ждёт данные", tone: "neutral" as Tone }
-      : live
+    : live
         ? { title: "Реальная торговля активна", tone: "positive" as Tone }
+        : demoOperational
+          ? { title: "Demo торгует, реальные деньги выключены", tone: "positive" as Tone }
+        : !sourcesOk
+          ? { title: "Atlas ждёт данные", tone: "neutral" as Tone }
         : {
             title: "Реальные деньги пока не используются",
             tone: "neutral" as Tone,
           };
   const statusExplanation = live
     ? "Ниже показан общий результат всех работающих стратегий после расходов."
-    : `Реальные ордера отключены. Идёт виртуальная проверка общего портфеля: ${pct(portfolioReturn)} после расходов, собрано ${roundTripProgress} полных сделок.`;
+    : demoOperational
+      ? `Bybit Demo работает автоматически: ${number(demoCompleted)} закрытых сделок, ${number(demoPositions.length)} открытых позиций, результат после расходов ${money(demoNet)}.${sourcesOk ? "" : " После перезапуска observer новые входы временно ждут восстановления обоих потоков данных; открытые позиции остаются под управлением."}`
+      : "Реальные ордера отключены. Research Demo пока ожидает разрешённый сигнал или восстановление технической готовности.";
   const gates = runtime?.trading_gate_audit?.gates ?? [];
   const milestones = [
     "MARKET_DATA",
@@ -1541,21 +1677,23 @@ export default function Page() {
                 <article className="truthLayer">
                   <span className="layerNumber">2</span>
                   <div>
-                    <b>Допущенный SHADOW-портфель</b>
+                    <b>Bybit Demo — реальные тестовые ордера</b>
                     <strong
                       className={
-                        portfolioNet > 0
+                        demoNet > 0
                           ? "positive"
-                          : portfolioNet < 0
+                          : demoNet < 0
                             ? "negative"
                             : "neutral"
                       }
                     >
-                      {pct(portfolioReturn)}
+                      {money(demoNet)}
                     </strong>
                     <p>
-                      {number(epochModelIds.length)} стратегий прошли текущий
-                      допуск · {roundTripProgress} сделок.
+                      {number(demoCompleted)} закрытых сделок · {number(demoPositions.length)}
+                      {" "}позиций сейчас открыто · реальные деньги не используются.
+                      Подтверждённый контур: {money(verifiedDemoNet)} за {number(verifiedDemoCompleted)} сделок.
+                      Исследовательская калибровка: {money(researchCalibrationNet)} за {number(researchCalibrationCompleted)} сделок.
                     </p>
                   </div>
                 </article>
@@ -1579,10 +1717,12 @@ export default function Page() {
                 </article>
               </div>
               <p className="truthNote">
-                Суммарное число сделок нельзя использовать как доказательство
-                одной торговой связки. Допуск считается отдельно для каждой
-                модели × рынка; сейчас economic gates прошли {number(leaderEconomicallyPassedMarkets.length)},
-                в Demo допущено {number(leaderDemoEligibleMarkets.length)}.
+                Уровень 2 — фактические исполнения на Bybit Demo после комиссий.
+                Внутри него подтверждённые модели и исследовательская калибровка
+                учитываются отдельно. Уровень 3 — SHADOW-симуляция, которая создаёт
+                те же model×market-сигналы для малых Demo-ордеров, но её процент сам
+                по себе не является биржевой прибылью. Mainnet включается только
+                отдельным решением владельца.
               </p>
             </section>
 
@@ -1590,71 +1730,54 @@ export default function Page() {
               <div className="sectionHead">
                 <div>
                   <span className="eyebrow">ГДЕ ПРИБЫЛЬНЫЕ МОДЕЛИ</span>
-                  <h2>Положительные оценки, ещё не доказанные стратегии</h2>
+                  <h2>Положительные результаты на Bybit Demo</h2>
                 </div>
                 <Badge
-                  status={profitableModels.length > 0 ? "PROMISING" : "COLLECTING_DATA"}
-                  label={`${number(profitableModels.length)} сырых положительных оценок`}
+                  status={demoPositiveStrategies.length > 0 ? "PROMISING" : "COLLECTING_DATA"}
+                  label={`${number(demoPositiveStrategies.length)} кандидатов в плюсе`}
                 />
               </div>
               <p className="note">
-                Здесь положительный знак означает только итоговую точечную оценку
-                после расходов. Сделки могут быть собраны по разным монетам; до
-                допуска хотя бы одна заранее зарегистрированная связка должна
-                отдельно пройти статистику, просадку и проверку исполнения.
+                Здесь считаются только подтверждённые входы и выходы текущего
+                исполнительного контракта на Bybit Demo, уже после фактических
+                комиссий. Плюс на малой выборке — калибровка, а не доказательство
+                будущей доходности.
               </p>
-              {profitableModels.length === 0 ? (
+              {demoPositiveStrategies.length === 0 ? (
                 <p className="empty">
-                  Сейчас нет кандидатов с положительным результатом после
-                  закрытых виртуальных сделок.
+                  Пока ни один кандидат не имеет положительного закрытого Demo PnL.
                 </p>
               ) : (
                 <div className="profitableModelGrid">
-                  {profitableModels.slice(0, 6).map((item) => {
-                    const modelId = item.model_id ?? "";
-                    const markets =
-                      runtime?.multi_model_portfolio?.eligible_markets_by_model?.[
-                        modelId
-                      ] ?? [];
-                    const admitted = epochModelIds.includes(modelId);
-                    const modelStatus =
-                      runtime?.multi_model_portfolio?.model_lifecycle?.[modelId]
-                        ?.status ?? item.status ?? "COLLECTING";
+                  {demoPositiveStrategies.slice(0, 6).map(([modelId, item]) => {
                     return (
-                      <article key={modelId || item.display_name}>
+                      <article key={modelId}>
                         <div className="profitableModelTop">
                           <div>
-                            <b>{item.display_name ?? modelLabel(modelId)}</b>
-                            <small>{mechanismName(item.mechanism_program_id, item.expression)}</small>
+                            <b>{demoModelLabel(modelId)}</b>
+                            <small>Исполнено на Bybit Demo</small>
                           </div>
                           <strong className="positive">
-                            {pct(item.portfolio_closed_trade_return ?? item.portfolio_return)}
+                            {money(item.net_pnl_usdt)}
                           </strong>
                         </div>
                         <div className="profitableModelFacts">
                           <span>
-                            {number(item.completed_trades)} суммарно · максимум {number(item.maximum_completed_trades_in_one_market)} на рынке
+                            {number(item.round_trips)} закрытых сделок · win rate {pct(item.win_rate)}
                           </span>
-                          <span>
-                            Перспективные рынки: {(item.promising_markets ?? []).map(coin).join(", ") || "ещё нет"}
-                          </span>
-                          <span>{forwardStatus(modelStatus)}</span>
+                          <span>Средний возврат: {pct(Number(item.mean_return_on_notional ?? 0))}</span>
+                          <span>{item.calibration_status ?? "WARMING_UP"}</span>
                         </div>
                         <p>
-                          {admitted
-                            ? "Включена в текущий SHADOW-портфель."
-                            : item.forward_oos_confirmation_passed
-                              ? "Forward пройден, но текущий портфельный допуск ещё не выдан."
-                              : markets.length === 0
-                                ? `Не допущена: доказанных рынков ${number(item.economically_passed_markets?.length)}, Demo-рынков ${number(item.demo_eligible_markets?.length)}.`
-                                : "Не допущена: forward-доказательство ещё не завершено."}
+                          Результат уже реализован на Demo, но выборка пока недостаточна
+                          для разрешения реальных денег.
                         </p>
                       </article>
                     );
                   })}
                 </div>
               )}
-              {profitableModels.length > 6 && (
+              {demoPositiveStrategies.length > 6 && (
                 <button
                   className="inlineLink"
                   type="button"
@@ -1671,45 +1794,35 @@ export default function Page() {
             <section className="section resultCard">
               <div className="sectionHead">
                 <div>
-                  <span className="eyebrow">УРОВЕНЬ 2 · ВИРТУАЛЬНЫЙ ПОРТФЕЛЬ</span>
-                  <h2>Только допущенные стратегии вместе</h2>
+                  <span className="eyebrow">УРОВЕНЬ 2 · BYBIT DEMO</span>
+                  <h2>Все исполненные Demo-стратегии вместе</h2>
                 </div>
                 <Badge
-                  status={
-                    validatedProfitableCandidates > 0
-                      ? "PASS"
-                      : epochModelIds.length > 0
-                        ? "PROMISING"
-                        : "COLLECTING_DATA"
-                  }
-                  label={
-                    validatedProfitableCandidates > 0
-                      ? "Подтверждено"
-                      : "Виртуально, предварительно"
-                  }
+                  status={demoOperational ? "PASS" : "COLLECTING_DATA"}
+                  label={demoOperational ? "Торгует автоматически" : "Готовится"}
                 />
               </div>
               <div className="primaryOutcome">
                 <div className="leaderIdentity">
                   <b>Общий результат после всех расходов</b>
                   <span>
-                    Единый портфель с общим капиталом и ограничениями риска
+                    Реальные тестовые исполнения на бирже без реальных денег
                   </span>
                 </div>
                 <strong
                   className={
-                    portfolioNet > 0
+                    demoNet > 0
                       ? "positive"
-                      : portfolioNet < 0
+                      : demoNet < 0
                         ? "negative"
                         : "neutral"
                   }
                 >
-                  {pct(portfolioReturn)}
+                  {money(demoNet)}
                 </strong>
                 <small>
-                  {money(portfolioNet)} на тестовом капитале{" "}
-                  {money(virtualCapital)} · с {epochStartedLabel}
+                  {number(demoCompleted)} полных входов и выходов · текущий
+                  контракт {demoEvidence?.current_execution_contract ?? "—"}
                 </small>
               </div>
               <div className="decisionGrid">
@@ -1724,127 +1837,86 @@ export default function Page() {
                 />
                 <Metric
                   label="Проверка результата"
-                  value={roundTripProgress}
-                  hint="полных входов и выходов из 20"
+                  value={`${number(demoCompleted)} / ${number(demoRequiredRoundTrips)}`}
+                  hint="подтверждённых Demo-входов и выходов"
                 />
                 <Metric
-                  label="Стратегий включено в итог"
-                  value={number(epochModelIds.length)}
-                  hint="прошли текущий допуск"
+                  label="Кандидатов исполнялось"
+                  value={number(demoStrategyRows.length)}
+                  hint={`${number(demoCandidateCount)} сейчас в Demo-когорте`}
                 />
                 <Metric
-                  label="Подтверждённых"
-                  value={number(validatedProfitableCandidates)}
-                  hint="получили полное forward-доказательство"
+                  label="Кандидатов в плюсе"
+                  value={number(demoPositiveStrategies.length)}
+                  hint="положительный реализованный Demo PnL"
                 />
               </div>
               <div className="portfolioContext">
                 <div>
                   <span>Результат до расходов</span>
                   <strong
-                    className={portfolioGross >= 0 ? "positive" : "negative"}
+                    className={demoGross >= 0 ? "positive" : "negative"}
                   >
-                    {money(portfolioGross)}
+                    {money(demoGross)}
                   </strong>
                 </div>
                 <div>
-                  <span>Комиссии и funding</span>
+                  <span>Фактические расходы</span>
                   <strong className="negative">
-                    −{money(Math.abs(portfolioCosts))}
+                    −{money(demoCosts)}
                   </strong>
                 </div>
                 <div>
-                  <span>Непрерывный SHADOW-журнал</span>
-                  <strong
-                    className={
-                      continuousShadowNet > 0
-                        ? "positive"
-                        : continuousShadowNet < 0
-                          ? "negative"
-                          : "neutral"
-                    }
-                  >
-                    {money(continuousShadowNet)}
+                  <span>Среднее проскальзывание</span>
+                  <strong className="neutral">
+                    {demoEvidence?.mean_absolute_slippage_bps == null
+                      ? "—"
+                      : `${Number(demoEvidence.mean_absolute_slippage_bps).toFixed(2)} bps`}
                   </strong>
                 </div>
                 <p>
-                  ATLAS не складывает проценты отдельных моделей. Он объединяет
-                  только допущенные стратегии, убирает пересекающиеся позиции,
-                  ограничивает общий риск и вычитает расходы. Маленький чистый
-                  итог означает, что пока слишком большая часть валового
-                  преимущества уходит на торговые издержки. Непрерывный журнал
-                  не обнуляется при смене состава и включает как удачные, так и
-                  отбракованные виртуальные решения за всё время.
+                  ATLAS объединяет фактически закрытые Demo-сделки, учитывает
+                  направление, объём, комиссию и биржевую цену выхода. Эта цифра
+                  отвечает на вопрос, заработала ли текущая Demo-торговля после
+                  расходов, а не насколько красиво модель выглядела в симуляции.
                 </p>
               </div>
               <p className="truthNote">
-                <b>Сейчас:</b> это результат виртуальной проверки, а не
+                <b>Сейчас:</b> это результат биржевой Demo-проверки, а не
                 заработок пользователя и не прогноз доходности. Реальный
                 финансовый итог появится только после отдельного разрешения
                 торговли.
               </p>
-              {showEpochTransition && (
-                <div className="epochTransition" role="status">
-                  <div>
-                    <span className="eyebrow">
-                      {previousEpochPolicyChanged
-                        ? "ИСТОРИЯ ДО ИСПРАВЛЕНИЯ РАСЧЁТА"
-                        : "ИСТОРИЯ ПРЕДЫДУЩЕГО СОСТАВА"}
-                    </span>
-                    <b>
-                      {previousEpochPolicyChanged
-                        ? "Прежний результат сохранён отдельно"
-                        : "Результат предыдущего состава сохранён"}
-                    </b>
-                    <p>
-                      {money(previousEpochNet)} к {previousEpochEndedLabel} ·{" "}
-                      {number(previousEpoch?.completed_round_trips)} полных
-                      сделок · {number(previousEpoch?.model_ids?.length)}{" "}
-                      стратегий.
-                    </p>
-                  </div>
-                  <p>
-                    {previousEpochPolicyChanged
-                      ? "Новая проверка считает только исполнимый объём и 12 bps расходов за полный круг. Старую и новую методику нельзя складывать."
-                      : `Текущий результат не отменяет прошлый: теперь проверяется новый состав из ${number(epochModelIds.length)} стратегий. Эти эпохи не складываются, иначе старая статистика создала бы ложное впечатление о качестве нового портфеля.`}
-                  </p>
-                </div>
-              )}
               <p className="truthNote">
-                <b>Честная проверка состава:</b> повторный тик не меняет допуск,
-                а добавление или исключение требует двух новых закрытых сделок.
-                Если состав всё же изменился, начинается отдельная проверка —
-                сделки разных наборов стратегий не смешиваются.
+                <b>История не потеряна:</b> прежние контракты сохранены для аудита,
+                но текущий итог использует только исправленный исполнительный
+                контракт и не смешивает несовместимые эпохи.
               </p>
             </section>
 
             <section className="section activity">
               <span className="eyebrow">ЧТО ПРОИСХОДИТ</span>
               <h2>
-                {validatedProfitableCandidates > 0
-                  ? "Проверяет подтверждённые модели перед следующим решением"
-                  : profitableCandidates > 0
-                    ? "Проверяет модели с положительной предварительной оценкой"
-                    : "Ищет прибыльные модели после расходов"}
+                {demoOperational
+                  ? "Исполняет сигналы кандидатов на Bybit Demo"
+                  : "Готовит кандидатов к биржевой Demo-проверке"}
               </h2>
               <div className="decisionGrid">
                 <Metric
-                  label="Модели одновременно"
-                  value={number(activeStrategies)}
-                />
-                <Metric
-                  label="Независимые механизмы"
-                  value={number(mechanismCount)}
+                  label="Кандидаты в Demo-когорте"
+                  value={number(demoCandidateCount)}
                 />
                 <Metric
                   label="Пары модель × рынок"
-                  value={number(evidenceLaneCount)}
+                  value={number(demo?.signal_funnel?.cohort_lanes)}
                 />
                 <Metric
-                  label="Открытые виртуальные цели"
-                  value={number(
-                    runtime?.multi_model_portfolio?.allocation_count,
-                  )}
+                  label="Сигналы сейчас"
+                  value={number(demo?.signal_funnel?.current_signals)}
+                />
+                <Metric
+                  label="Открытые Demo-позиции"
+                  value={number(demoPositions.length)}
                 />
               </div>
               <div className="nextStep">
@@ -1852,13 +1924,11 @@ export default function Page() {
                 <div>
                   <b>Следующее действие Atlas</b>
                   <p>
-                    {recoveringLoss
-                      ? "Заменять слабые части портфеля и продолжать строгий SHADOW без ослабления критериев."
-                      : automation?.automatic_next_action
-                        ? blockerLabel(automation.automatic_next_action)
-                        : currentGate
-                          ? `Продолжать этап «${currentGate.label}».`
-                          : "Продолжать независимую проверку результата и риска."}
+                    {(demo?.signal_funnel?.ready_for_demo ?? 0) > 0
+                      ? "Исполнить следующий свежий разрешённый сигнал и вернуть результат модели."
+                      : demoPositions.length > 0
+                        ? "Управлять открытыми позициями до сигнала выхода или защитного Stop Loss."
+                        : "Ждать новый независимый сигнал моделей без искусственных сделок."}
                   </p>
                 </div>
               </div>
@@ -1869,27 +1939,24 @@ export default function Page() {
                 <div>
                   <span className="eyebrow">ЧЕГО ЖДЁМ</span>
                   <h2>
-                    {missingRoundTrips > 0
-                      ? `Ещё ${number(missingRoundTrips)} полных сделок до первого общего рубежа`
-                      : "Минимальный объём сделок собран"}
+                    {demoMissingRoundTrips > 0
+                      ? `Ещё ${number(demoMissingRoundTrips)} полных Demo-сделок до первого рубежа`
+                      : "Первый объём Demo-сделок собран"}
                   </h2>
                 </div>
-                <b>{evidencePercent}%</b>
+                <b>{demoEvidencePercent}%</b>
               </div>
               <div
                 className="progress"
-                aria-label={`Собрано ${evidencePercent}% минимального объёма сделок`}
+                aria-label={`Собрано ${demoEvidencePercent}% минимального объёма Demo-сделок`}
               >
-                <span style={{ width: `${evidencePercent}%` }} />
+                <span style={{ width: `${demoEvidencePercent}%` }} />
               </div>
               <p className="note">
-                {nextEvidenceHours == null
-                  ? "Срок появится, когда у активных пар накопится устойчивый темп входов и выходов."
-                  : `Самая быстрая активная пара может достичь своего рубежа примерно через ${Math.ceil(nextEvidenceHours)} ч. Это оценка, а не срок запуска.`}
+                Это первый диагностический рубеж исполнения, а не автоматическое
+                разрешение Mainnet. После него Atlas продолжит проверять каждую
+                модель × рынок отдельно.
               </p>
-              <WaitingFor
-                blockers={automation?.blockers ?? portfolioGate?.blockers}
-              />
             </section>
 
             <section className="section">
@@ -1897,24 +1964,27 @@ export default function Page() {
                 <div>
                   <span className="eyebrow">ПОЗИЦИИ</span>
                   <h2>
-                    {positions.length > 0
-                      ? `Виртуальные позиции: ${number(positions.length)}`
-                      : "Сейчас сигнала нет"}
+                    {demoPositions.length > 0
+                      ? `Открытые Bybit Demo-позиции: ${number(demoPositions.length)}`
+                      : "Открытых Demo-позиций сейчас нет"}
                   </h2>
                 </div>
-                {positions.length > 0 && (
+                {demoPositions.length > 0 && (
                   <button onClick={() => setTab("trading")}>Все позиции</button>
                 )}
               </div>
-              {positions.length === 0 ? (
+              {demoPositions.length === 0 ? (
                 <p className="empty">
                   Это нормально: Atlas ждёт условия модели, а не открывает
                   сделки ради активности.
                 </p>
               ) : (
                 <div className="positionPreview">
-                  {positions.slice(0, 2).map(([symbol, item]) => (
-                    <PositionCard key={symbol} symbol={symbol} item={item} />
+                  {demoPositions.slice(0, 2).map((item, index) => (
+                    <DemoPositionCard
+                      key={`${item.symbol ?? "demo"}-${index}`}
+                      item={item}
+                    />
                   ))}
                 </div>
               )}
@@ -2000,6 +2070,30 @@ export default function Page() {
                   исключено прежних событий: {number(demoEvidence?.excluded_prior_contract_fill_events)}
                 </span>
               </div>
+              <div className="demoMetrics">
+                <Metric
+                  label="Подтверждённые модели"
+                  value={money(verifiedDemoNet)}
+                  hint={`${number(verifiedDemoCompleted)} Demo round trips · строгий фильтр комиссий и spread`}
+                  tone={verifiedDemoNet > 0 ? "positive" : verifiedDemoNet < 0 ? "negative" : "neutral"}
+                />
+                <Metric
+                  label="Исследовательская калибровка"
+                  value={money(researchCalibrationNet)}
+                  hint={`${number(researchCalibrationCompleted)} малых Demo round trips · не переносится в Mainnet-доказательство`}
+                  tone={researchCalibrationNet > 0 ? "positive" : researchCalibrationNet < 0 ? "negative" : "neutral"}
+                />
+              </div>
+              {suspendedResearchLanes.length > 0 ? (
+                <div className="demoWaiting">
+                  <b>Автоматически остановленные исследовательские ветки</b>
+                  <span>
+                    {suspendedResearchLanes
+                      .map((item) => `${item.display_name ?? modelLabel(item.model_id)} ${coin(item.symbol ?? "")}: ${item.reason} (${money(item.net_pnl_usdt)})`)
+                      .join(" · ")}
+                  </span>
+                </div>
+              ) : null}
               {demoReason || demo?.blockers?.length ? (
                 <div className="demoWaiting">
                   <b>Почему сейчас нет нового ордера</b>
@@ -2015,6 +2109,17 @@ export default function Page() {
                     блокировок: {number(demo.execution_lock_reconciliation.resolved)}
                     {demo.execution_lock_reconciliation.blockers?.length
                       ? ` · ${demo.execution_lock_reconciliation.blockers.join("; ")}`
+                      : ""}
+                  </span>
+                </div>
+              ) : null}
+              {demo?.runtime_monitor?.last_resolved_error ? (
+                <div className="demoWaiting resolvedIncident">
+                  <b>Последний инцидент устранён</b>
+                  <span>
+                    {demo.runtime_monitor.last_resolved_error}
+                    {demo.runtime_monitor.last_resolved_error_at
+                      ? ` · восстановлено ${new Date(demo.runtime_monitor.last_resolved_error_at).toLocaleString("ru-RU")}`
                       : ""}
                   </span>
                 </div>
@@ -2331,7 +2436,7 @@ export default function Page() {
                 </span>
                 <span>Комиссии: {money(demoEvidence?.actual_fees_usdt)}</span>
                 <span>
-                  Поток: до {number(automation?.demo_enablement?.maximum_new_experiments_per_day)} сделок/сутки · до {number(automation?.demo_enablement?.maximum_open_positions)} одновременно
+                  Эффективный предел: до {number(effectiveDailyExperimentLimit)} сделок/сутки · до {number(effectiveOpenPositionLimit)} одновременно, из них исследовательских — не более {number(executorLimits?.maximum_research_calibration_positions ?? 2)}
                 </span>
                 <strong>Реальные деньги: ВЫКЛЮЧЕНЫ</strong>
               </div>
@@ -3066,12 +3171,11 @@ export default function Page() {
               <p className="note">
                 До{" "}
                 {number(
-                  automation?.demo_enablement
-                    ?.maximum_new_experiments_per_day ?? 4,
+                  effectiveDailyExperimentLimit,
                 )}{" "}
                 новых экспериментов в день, максимум{" "}
                 {number(
-                  automation?.demo_enablement?.maximum_open_positions ?? 4,
+                  effectiveOpenPositionLimit,
                 )}{" "}
                 позиций. На реальные деньги разрешение не распространяется.
               </p>
@@ -3354,6 +3458,9 @@ export default function Page() {
                         </b>
                         <small>
                           {restartReason(event.reason)} · PID {event.pid ?? "—"}
+                          {event.gap_seconds
+                            ? ` · перерыв ${Math.round(event.gap_seconds / 60)} мин · состояние сохранено`
+                            : ""}
                         </small>
                       </div>
                     </article>
@@ -3369,6 +3476,11 @@ export default function Page() {
                 <p>
                   Started: {lifecycle?.current_session?.started_at ?? "—"};
                   reason: {lifecycle?.current_session?.start_reason ?? "—"}
+                </p>
+                <p>
+                  Последний перерыв: {number(lifecycle?.current_session?.resume_gap_seconds)} сек.;
+                  данные до перерыва сохранены, новые рыночные события во время выключения
+                  компьютера не могли собираться.
                 </p>
                 <p>
                   Orderly stops: {number(lifecycle?.counters?.orderly_stops)};
